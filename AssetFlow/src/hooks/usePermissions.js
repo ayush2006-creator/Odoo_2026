@@ -24,17 +24,17 @@ import {
  * localStorage. Replace the `getRole()` call below once the auth
  * provider is in place.
  */
-function getCurrentRole() {
+function getCurrentUser() {
   try {
-    const user = JSON.parse(localStorage.getItem('assetflow_user') || '{}');
-    return user.role || 'Employee';
+    return JSON.parse(localStorage.getItem('assetflow_user') || '{}');
   } catch {
-    return 'Employee';
+    return {};
   }
 }
 
 export function usePermissions() {
-  const role = getCurrentRole();
+  const user = getCurrentUser();
+  const role = user.role || 'Employee';
 
   const can = useCallback(
     (action) => canCheck(role, action),
@@ -51,5 +51,5 @@ export function usePermissions() {
     [role],
   );
 
-  return { role, can, hasMinRole, allowedActions };
+  return { role, can, hasMinRole, allowedActions, user };
 }

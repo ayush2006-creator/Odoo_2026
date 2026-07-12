@@ -4,20 +4,41 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import {
-  DndContext, closestCorners, PointerSensor, useSensor, useSensors, DragOverlay,
+  DndContext, closestCorners, PointerSensor, useSensor, useSensors, DragOverlay, useDroppable,
 } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { GripVertical, Wrench } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { GripVertical, Wrench, Plus } from 'lucide-react';
+
+function DroppableColumn({ id, children, className }) {
+  const { setNodeRef } = useDroppable({ id });
+  return (
+    <div ref={setNodeRef} className={className}>
+      {children}
+    </div>
+  );
+}
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
 import { BlurFade } from '@/components/ui/blur-fade';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { usePermissions } from '@/hooks/usePermissions';
 import { ACTIONS } from '@/lib/permissions';
+import { getAssets } from '@/api/assets';
 import { getEmployees } from '@/api/employees';
 import {
   getMaintenanceRequests,
+  createMaintenanceRequest,
   approveMaintenanceRequest,
   assignTechnician,
   startMaintenance,
@@ -58,10 +79,10 @@ function mapStatusToColKey(status) {
   return 'pending';
 }
 
-function SortableCard({ item, hasTransitionPerm }) {
+function SortableCard({ item, canDrag }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: item.id,
-    disabled: !hasTransitionPerm,
+    disabled: !canDrag,
   });
 
   const style = {
@@ -75,20 +96,20 @@ function SortableCard({ item, hasTransitionPerm }) {
       ref={setNodeRef}
       style={style}
       {...attributes}
-      {...(hasTransitionPerm ? listeners : {})}
-      className={hasTransitionPerm ? "cursor-grab active:cursor-grabbing mb-2" : "cursor-default mb-2"}
+      {...(canDrag ? listeners : {})}
+      className={canDrag ? "cursor-grab active:cursor-grabbing mb-2" : "cursor-default mb-2"}
     >
-      <MaintenanceCard item={item} hasTransitionPerm={hasTransitionPerm} />
+      <MaintenanceCard item={item} canDrag={canDrag} />
     </div>
   );
 }
 
-function MaintenanceCard({ item, hasTransitionPerm }) {
+function MaintenanceCard({ item, canDrag }) {
   return (
     <Card className="hover:shadow-md transition-shadow">
       <CardContent className="p-3">
         <div className="flex items-start gap-2">
-          {hasTransitionPerm && (
+          {canDrag && (
             <div className="mt-0.5 text-muted-foreground">
               <GripVertical className="size-4 shrink-0" />
             </div>
@@ -109,9 +130,119 @@ function MaintenanceCard({ item, hasTransitionPerm }) {
   );
 }
 
+// ── Raise Maintenance Request Dialog ─────────────────────────────────────────
+function RaiseRequestDialog({ open, onOpenChange, onSubmitted }) {
+  const [assets, setAssets] = useState([]);
+  const [assetId, setAssetId] = useState('');
+  const [issue, setIssue] = useState('');
+  const [priority, setPriority] = useState('Medium');
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    getAssets().then((list) => {
+      const arr = Array.isArray(list) ? list : (list?.data || []);
+      setAssets(arr);
+      if (arr.length > 0) setAssetId(String(arr[0].id));
+    }).catch(() => {});
+  }, [open]);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!assetId || !issue.trim()) return;
+    setSubmitting(true);
+    try {
+      await createMaintenanceRequest({ assetId, issueDescription: issue, priority });
+      setIssue('');
+      setPriority('Medium');
+      onOpenChange(false);
+      onSubmitted();
+    } catch (err) {
+      console.error('Failed to raise maintenance request:', err);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const safeAssets = Array.isArray(assets) ? assets : [];
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Raise Maintenance Request</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label>Asset</Label>
+            <Select value={assetId} onValueChange={setAssetId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select asset...">
+                  {assetId ? (() => {
+                    const selected = safeAssets.find(a => String(a.id) === String(assetId));
+                    return selected ? `${selected.name} (${selected.tag || selected.assetTag || `AF-${selected.id}`})` : 'Select asset...';
+                  })() : 'Select asset...'}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {safeAssets.map((a) => (
+                  <SelectItem key={a.id} value={String(a.id)}>
+                    {`${a.name} (${a.tag || a.assetTag || `AF-${a.id}`})`}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Issue Description</Label>
+            <Textarea
+              placeholder="Describe the issue..."
+              value={issue}
+              onChange={(e) => setIssue(e.target.value)}
+              rows={3}
+              required
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Priority</Label>
+            <Select value={priority} onValueChange={setPriority}>
+              <SelectTrigger>
+                <SelectValue>
+                  {priority}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Low">Low</SelectItem>
+                <SelectItem value="Medium">Medium</SelectItem>
+                <SelectItem value="High">High</SelectItem>
+                <SelectItem value="Critical">Critical</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={submitting || !assetId || !issue.trim()}>
+              {submitting ? 'Submitting...' : 'Submit Request'}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function MaintenancePage() {
-  const { can } = usePermissions();
+  const { can, role, user } = usePermissions();
   const hasTransitionPerm = can(ACTIONS.MAINTENANCE_APPROVE) || can(ACTIONS.MAINTENANCE_ASSIGN_TECH) || can(ACTIONS.MAINTENANCE_START) || can(ACTIONS.MAINTENANCE_RESOLVE);
+  const canCreate = can(ACTIONS.MAINTENANCE_CREATE);
+
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [assetMap, setAssetMap] = useState({});
 
   const [columns, setColumns] = useState({
     pending: [],
@@ -124,8 +255,19 @@ export default function MaintenancePage() {
   const [activeId, setActiveId] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const loadTickets = useCallback(async () => {
+  const loadTickets = useCallback(async (currentAssetMap = null) => {
     try {
+      let map = currentAssetMap;
+      if (!map) {
+        const assetsList = await getAssets().catch(() => []);
+        const safeAssets = Array.isArray(assetsList) ? assetsList : (assetsList?.data || []);
+        map = {};
+        safeAssets.forEach((a) => {
+          map[String(a.id)] = a;
+        });
+        setAssetMap(map);
+      }
+
       const tickets = await getMaintenanceRequests();
       if (tickets) {
         const newCols = {
@@ -137,12 +279,15 @@ export default function MaintenancePage() {
         };
         tickets.forEach((t) => {
           const colKey = mapStatusToColKey(t.status);
+          const matchedAsset = map[String(t.assetId || t.asset_id)] || t.asset || {};
           newCols[colKey].push({
             id: t.id,
-            tag: t.asset?.assetTag || t.asset?.tag || `AF-${t.assetId}`,
-            name: t.asset?.name || `Asset #${t.assetId}`,
-            desc: t.issueDescription || '',
+            tag: matchedAsset.tag || matchedAsset.assetTag || matchedAsset.asset_tag || t.asset?.assetTag || t.asset?.tag || t.asset?.asset_tag || `AF-${t.assetId || t.asset_id}`,
+            name: matchedAsset.name || t.asset?.name || `Asset #${t.assetId || t.asset_id}`,
+            desc: t.issueDescription || t.issue_description || '',
             priority: t.priority || 'Medium',
+            assetId: t.assetId || t.asset_id || t.asset?.id,
+            asset: matchedAsset,
           });
         });
         setColumns(newCols);
@@ -155,19 +300,32 @@ export default function MaintenancePage() {
   }, []);
 
   useEffect(() => {
-    loadTickets();
-    async function loadEmps() {
+    async function initPage() {
       try {
-        const emps = await getEmployees();
+        const [assetsList, emps] = await Promise.all([
+          getAssets().catch(() => []),
+          getEmployees().catch(() => [])
+        ]);
+
+        const safeAssets = Array.isArray(assetsList) ? assetsList : (assetsList?.data || []);
+        const map = {};
+        safeAssets.forEach((a) => {
+          map[String(a.id)] = a;
+        });
+        setAssetMap(map);
+
         if (emps) {
           if (Array.isArray(emps)) setEmployees(emps);
           else if (Array.isArray(emps.data)) setEmployees(emps.data);
         }
+
+        await loadTickets(map);
       } catch (err) {
-        console.warn('Failed to load employees for technician assignment fallback:', err);
+        console.warn('Failed to load asset/employee mapping:', err);
+        await loadTickets({});
       }
     }
-    loadEmps();
+    initPage();
   }, [loadTickets]);
 
   const sensors = useSensors(
@@ -181,22 +339,35 @@ export default function MaintenancePage() {
     return null;
   }, [columns]);
 
-  const findItem = useCallback((id) => {
-    for (const items of Object.values(columns)) {
-      const item = items.find((i) => i.id === id);
-      if (item) return item;
+  const canDragItem = useCallback((item) => {
+    if (!item) return false;
+    // Admin and AssetManager can drag everything
+    if (can(ACTIONS.MAINTENANCE_APPROVE) || can(ACTIONS.MAINTENANCE_ASSIGN_TECH) || can(ACTIONS.MAINTENANCE_START) || can(ACTIONS.MAINTENANCE_RESOLVE)) {
+      return true;
     }
-    return null;
-  }, [columns]);
+
+    // DepartmentHead can drag if the asset belongs to their department
+    if (role === 'DepartmentHead' && user?.departmentId) {
+      const itemAsset = assetMap[String(item.assetId || item.asset?.id)] || item.asset || {};
+      const itemDeptId = item.departmentId || itemAsset.departmentId || itemAsset.department_id;
+      if (itemDeptId && String(itemDeptId) === String(user.departmentId)) {
+        return true;
+      }
+    }
+    return false;
+  }, [can, role, user, assetMap]);
 
   const handleDragStart = (event) => {
-    if (!hasTransitionPerm) return;
+    const item = findItem(event.active.id);
+    if (!canDragItem(item)) return;
     setActiveId(event.active.id);
   };
 
   const handleDragEnd = async (event) => {
-    if (!hasTransitionPerm) return;
     const { active, over } = event;
+    const item = findItem(active.id);
+    if (!canDragItem(item)) return;
+
     setActiveId(null);
     if (!over) return;
 
@@ -225,17 +396,17 @@ export default function MaintenancePage() {
       }
 
       setColumns((prev) => {
-        const item = prev[sourceCol].find((i) => i.id === active.id);
-        if (!item) return prev;
+        const ticket = prev[sourceCol].find((i) => i.id === active.id);
+        if (!ticket) return prev;
         return {
           ...prev,
           [sourceCol]: prev[sourceCol].filter((i) => i.id !== active.id),
-          [targetCol]: [...prev[targetCol], item],
+          [targetCol]: [...prev[targetCol], ticket],
         };
       });
     } catch (err) {
       console.error('Failed to transition ticket:', err);
-      // Revert board to database state on failure (e.g. role validation block)
+      // Revert board to database state on failure
       await loadTickets();
     }
   };
@@ -244,7 +415,23 @@ export default function MaintenancePage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Maintenance" description="Track maintenance requests through the workflow." />
+      <PageHeader
+        title="Maintenance"
+        description="Track maintenance requests through the workflow."
+      >
+        {canCreate && (
+          <Button size="sm" onClick={() => setDialogOpen(true)}>
+            <Plus className="size-4 mr-1" />
+            Raise Request
+          </Button>
+        )}
+      </PageHeader>
+
+      <RaiseRequestDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        onSubmitted={loadTickets}
+      />
 
       <DndContext
         sensors={sensors}
@@ -265,24 +452,27 @@ export default function MaintenancePage() {
                     {columns[key]?.length || 0}
                   </Badge>
                 </div>
-                <div className="p-2 pt-0 min-h-[120px]">
+                <DroppableColumn
+                  id={key}
+                  className="p-2 pt-0 min-h-[120px] h-full flex flex-col"
+                >
                   <SortableContext
                     items={columns[key]?.map((i) => i.id) || []}
                     strategy={verticalListSortingStrategy}
                     id={key}
                   >
                     {columns[key]?.map((item) => (
-                      <SortableCard key={item.id} item={item} hasTransitionPerm={hasTransitionPerm} />
+                      <SortableCard key={item.id} item={item} canDrag={canDragItem(item)} />
                     ))}
                   </SortableContext>
-                </div>
+                </DroppableColumn>
               </div>
             ))}
           </div>
         </BlurFade>
 
         <DragOverlay>
-          {activeItem ? <MaintenanceCard item={activeItem} hasTransitionPerm={hasTransitionPerm} /> : null}
+          {activeItem ? <MaintenanceCard item={activeItem} canDrag={canDragItem(activeItem)} /> : null}
         </DragOverlay>
       </DndContext>
 

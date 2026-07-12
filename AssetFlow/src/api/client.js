@@ -259,9 +259,10 @@ function getMockFallback(endpoint, method, body, params) {
       role = 'DepartmentHead';
       name = 'Priya Shah';
     }
+    const userDeptId = (role === 'DepartmentHead') ? 'd-1' : null;
     return {
       token: 'mock-jwt-token-12345',
-      user: { id: 'u-1', name, email, role, status: 'Active' }
+      user: { id: 'u-1', name, email, role, status: 'Active', departmentId: userDeptId }
     };
   }
 
@@ -306,7 +307,33 @@ function getMockFallback(endpoint, method, body, params) {
   }
 
   if (endpoint.startsWith('/transfers')) {
-    return { success: true, message: 'Transfer request submitted successfully.' };
+    // POST / PATCH actions return success
+    if (method === 'POST' || method === 'PATCH') {
+      return { success: true, message: 'Transfer request submitted successfully.' };
+    }
+    // GET /transfers returns pending list for admin review
+    return [
+      {
+        id: 'tr-1',
+        assetId: '1',
+        asset: { assetTag: 'AF-0013', tag: 'AF-0013', name: 'Dell Laptop' },
+        fromHolderId: 'e-3',
+        toHolderId: 'e-2',
+        reason: 'Department relocation',
+        status: 'Pending',
+        createdAt: new Date(Date.now() - 3600000).toISOString()
+      },
+      {
+        id: 'tr-2',
+        assetId: '2',
+        asset: { assetTag: 'AF-0042', tag: 'AF-0042', name: 'Projector' },
+        fromHolderId: 'e-1',
+        toHolderId: 'e-4',
+        reason: 'Project requirement',
+        status: 'Pending',
+        createdAt: new Date(Date.now() - 7200000).toISOString()
+      }
+    ];
   }
 
   if (endpoint.includes('/audit-cycles') && endpoint.includes('/items')) {
@@ -360,6 +387,22 @@ function getMockFallback(endpoint, method, body, params) {
     ];
   }
 
+  if (endpoint.startsWith('/maintenance-requests')) {
+    // POST (create) and PATCH (transitions) return success
+    if (method === 'POST' || method === 'PATCH') {
+      return { id: `mr-${Date.now()}`, status: 'Pending', message: 'Maintenance request updated.' };
+    }
+    // GET returns full kanban mock list
+    return [
+      { id: 'mr-1', assetId: '1', asset: { id: '1', assetTag: 'AF-0013', tag: 'AF-0013', name: 'Dell Laptop', departmentId: 'd-1' }, issueDescription: 'Bulb replacement needed', priority: 'High', status: 'Pending', createdAt: new Date(Date.now() - 86400000).toISOString() },
+      { id: 'mr-2', assetId: '3', asset: { id: '3', assetTag: 'AF-0091', tag: 'AF-0091', name: 'Office Chair', departmentId: 'd-2' }, issueDescription: 'Battery replacement', priority: 'Medium', status: 'Pending', createdAt: new Date(Date.now() - 172800000).toISOString() },
+      { id: 'mr-3', assetId: '2', asset: { id: '2', assetTag: 'AF-0042', tag: 'AF-0042', name: 'Projector', departmentId: 'd-1' }, issueDescription: 'Screen damage', priority: 'High', status: 'Approved', createdAt: new Date(Date.now() - 259200000).toISOString() },
+      { id: 'mr-4', assetId: '4', asset: { id: '4', assetTag: 'AF-0033', tag: 'AF-0033', name: 'Conference Table', departmentId: 'd-4' }, issueDescription: 'Cooling issue', priority: 'Medium', status: 'TechnicianAssigned', createdAt: new Date(Date.now() - 345600000).toISOString() },
+      { id: 'mr-5', assetId: '1', asset: { id: '1', assetTag: 'AF-0013', tag: 'AF-0013', name: 'Dell Laptop', departmentId: 'd-1' }, issueDescription: 'Paper jam', priority: 'Low', status: 'InProgress', createdAt: new Date(Date.now() - 432000000).toISOString() },
+      { id: 'mr-6', assetId: '2', asset: { id: '2', assetTag: 'AF-0042', tag: 'AF-0042', name: 'Projector', departmentId: 'd-1' }, issueDescription: 'Cable replaced', priority: 'Low', status: 'Resolved', createdAt: new Date(Date.now() - 518400000).toISOString() }
+    ];
+  }
+
   if (endpoint.startsWith('/bookings')) {
     return [
       { id: 'b-1', start: 9, end: 10, title: 'Procurement Team', status: 'booked' },
@@ -372,14 +415,14 @@ function getMockFallback(endpoint, method, body, params) {
     // If filtering by specific tag, return matching asset or a default mock asset
     if (params?.tag) {
       return [
-        { id: 'asset-76', tag: params.tag, name: 'Dell Laptop', category: 'Electronics', status: 'Allocated', location: 'Bangalore', currentHolder: 'Priya Shah' }
+        { id: 'asset-76', tag: params.tag, name: 'Dell Laptop', category: 'Electronics', status: 'Allocated', location: 'Bangalore', currentHolder: 'Priya Shah', departmentId: 'd-1' }
       ];
     }
     return [
-      { id: '1', tag: 'AF-0013', name: 'Dell Laptop', category: 'Electronics', status: 'Allocated', location: 'Bangalore' },
-      { id: '2', tag: 'AF-0042', name: 'Projector', category: 'Electronics', status: 'Available', location: 'HQ Floor 2' },
-      { id: '3', tag: 'AF-0091', name: 'Office Chair', category: 'Furniture', status: 'Available', location: 'Warehouse' },
-      { id: '4', tag: 'AF-0033', name: 'Conference Table', category: 'Furniture', status: 'Under Maintenance', location: 'HQ Floor 2' }
+      { id: '1', tag: 'AF-0013', name: 'Dell Laptop', category: 'Electronics', status: 'Allocated', location: 'Bangalore', departmentId: 'd-1' },
+      { id: '2', tag: 'AF-0042', name: 'Projector', category: 'Electronics', status: 'Available', location: 'HQ Floor 2', departmentId: 'd-1' },
+      { id: '3', tag: 'AF-0091', name: 'Office Chair', category: 'Furniture', status: 'Available', location: 'Warehouse', departmentId: 'd-2' },
+      { id: '4', tag: 'AF-0033', name: 'Conference Table', category: 'Furniture', status: 'Under Maintenance', location: 'HQ Floor 2', departmentId: 'd-4' }
     ];
   }
 
