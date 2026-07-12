@@ -46,17 +46,7 @@ import { usePermissions } from '@/hooks/usePermissions';
 import { ACTIONS } from '@/lib/permissions';
 import { ROLES, ROLE_LABELS } from '@/lib/roles';
 
-// ---------------------------------------------------------------------------
-// Mock data
-// ---------------------------------------------------------------------------
-
-const INITIAL_EMPLOYEES = [
-  { id: 1, name: 'Priya Shah', email: 'priya@co',  department: 'Engineering', role: 'DepartmentHead', status: 'Active' },
-  { id: 2, name: 'Arjun Rao',  email: 'arjun@co',  department: 'Facilities',  role: 'AssetManager',   status: 'Active' },
-  { id: 3, name: 'Meera K',    email: 'meera@co',   department: 'HR',          role: 'Employee',       status: 'Active' },
-  { id: 4, name: 'Ravi J',     email: 'ravi@co',    department: 'Finance',     role: 'Admin',          status: 'Active' },
-  { id: 5, name: 'Leela M',    email: 'leela@co',   department: 'Marketing',   role: 'Employee',       status: 'Inactive' },
-];
+import { getEmployees } from '@/api/employees';
 
 // ---------------------------------------------------------------------------
 // Component
@@ -64,10 +54,26 @@ const INITIAL_EMPLOYEES = [
 
 export function EmployeesTab({ addDialogOpen, onAddDialogClose }) {
   const { can } = usePermissions();
-  const [employees, setEmployees] = useState(INITIAL_EMPLOYEES);
+  const [employees, setEmployees] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingEmp, setEditingEmp] = useState(null);
   const [form, setForm] = useState({ name: '', email: '', department: '', role: ROLES.EMPLOYEE });
+
+  // Fetch employees on mount
+  useEffect(() => {
+    async function loadEmployees() {
+      try {
+        const data = await getEmployees();
+        if (data) setEmployees(data);
+      } catch (err) {
+        console.error('Failed to load employees:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadEmployees();
+  }, [addDialogOpen]);
 
   const canChangeRole = can(ACTIONS.EMPLOYEE_CHANGE_ROLE);
   const canEdit = can(ACTIONS.EMPLOYEE_EDIT);

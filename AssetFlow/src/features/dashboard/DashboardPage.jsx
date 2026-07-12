@@ -22,6 +22,7 @@ import {
   ArrowRightLeft,
   ClipboardCheck,
 } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import { usePermissions } from '@/hooks/usePermissions';
@@ -37,45 +38,18 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
+import { getKPIs } from '@/api/dashboard';
+import { getNotifications } from '@/api/notifications';
 
-// ── Static data ──────────────────────────────────────────────────────────────
-
-const KPI_DATA = [
-  { title: 'Available', value: 96, icon: PackageCheck, color: 'text-emerald-500' },
-  { title: 'Allocated', value: 34, icon: PackageMinus, color: 'text-blue-500' },
-  { title: 'Under Maintenance', value: 4, icon: Wrench, color: 'text-orange-500' },
-  { title: 'Active Bookings', value: 6, icon: CalendarDays, color: 'text-primary' },
-  { title: 'Pending Transfers', value: 3, icon: ArrowLeftRight, color: 'text-amber-500' },
-  { title: 'Upcoming Returns', value: 12, icon: CalendarClock, color: 'text-primary' },
-];
-
-const ACTIVITY_ITEMS = [
-  {
-    icon: Laptop,
-    text: 'Laptop AF-0019 — allocated to Priya Shah',
-    time: '27 Sept',
-  },
-  {
-    icon: DoorOpen,
-    text: 'Room B3 — booking confirmed',
-    time: '3:00 to 5:00 PM',
-  },
-  {
-    icon: Projector,
-    text: 'Projector AF-0063 — maintenance resolved',
-    time: 'Today',
-  },
-  {
-    icon: ArrowRightLeft,
-    text: 'Transfer approved — AF-0033 to Facilities dept',
-    time: 'Today',
-  },
-  {
-    icon: ClipboardCheck,
-    text: 'Audit cycle Q3 completed — 2 discrepancies found',
-    time: 'Yesterday',
-  },
-];
+// Map icon color helpers
+const ICON_MAP = {
+  Available: { icon: PackageCheck, color: 'text-emerald-500' },
+  Allocated: { icon: PackageMinus, color: 'text-blue-500' },
+  'Under Maintenance': { icon: Wrench, color: 'text-orange-500' },
+  'Active Bookings': { icon: CalendarDays, color: 'text-primary' },
+  'Pending Transfers': { icon: ArrowLeftRight, color: 'text-amber-500' },
+  'Upcoming Returns': { icon: CalendarClock, color: 'text-primary' },
+};
 
 // ── Component ────────────────────────────────────────────────────────────────
 
@@ -83,12 +57,53 @@ export default function DashboardPage() {
   const { can } = usePermissions();
   const navigate = useNavigate();
 
+  const [kpis, setKpis] = useState({
+    available: 96,
+    allocated: 34,
+    underMaintenance: 4,
+    activeBookings: 6,
+    pendingTransfers: 3,
+    upcomingReturns: 12
+  });
+
+  const [activities, setActivities] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadDashboardData() {
+      try {
+        const stats = await getKPIs();
+        if (stats) {
+          setKpis(stats);
+        }
+        const notifs = await getNotifications();
+        if (notifs) {
+          setActivities(notifs);
+        }
+      } catch (err) {
+        console.error('Failed to load dashboard KPIs/activities:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadDashboardData();
+  }, []);
+
+  const kpiList = [
+    { title: 'Available', value: kpis.available, icon: PackageCheck, color: 'text-emerald-500' },
+    { title: 'Allocated', value: kpis.allocated, icon: PackageMinus, color: 'text-blue-500' },
+    { title: 'Under Maintenance', value: kpis.underMaintenance, icon: Wrench, color: 'text-orange-500' },
+    { title: 'Active Bookings', value: kpis.activeBookings, icon: CalendarDays, color: 'text-primary' },
+    { title: 'Pending Transfers', value: kpis.pendingTransfers, icon: ArrowLeftRight, color: 'text-amber-500' },
+    { title: 'Upcoming Returns', value: kpis.upcomingReturns, icon: CalendarClock, color: 'text-primary' },
+  ];
+
   return (
     <div className="flex flex-col gap-6">
       {/* ── Section 1 · KPI Cards ─────────────────────────────────────── */}
       <BlurFade delay={0.05} inView>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-          {KPI_DATA.map((kpi) => (
+          {kpiList.map((kpi) => (
             <KPICard
               key={kpi.title}
               title={kpi.title}
@@ -117,7 +132,7 @@ export default function DashboardPage() {
           {can(ACTIONS.ASSET_CREATE) && (
             <ShimmerButton
               className="text-sm"
-              onClick={() => navigate('/assets/new')}
+              onClick={() => navigate('/assets')}
             >
               <Plus className="size-4 mr-2" />
               Register Asset
@@ -127,7 +142,7 @@ export default function DashboardPage() {
           {can(ACTIONS.BOOKING_CREATE) && (
             <ShimmerButton
               className="text-sm"
-              onClick={() => navigate('/bookings/new')}
+              onClick={() => navigate('/bookings')}
             >
               <CalendarPlus className="size-4 mr-2" />
               Book Resource
@@ -136,7 +151,7 @@ export default function DashboardPage() {
 
           <ShimmerButton
             className="text-sm"
-            onClick={() => navigate('/maintenance/new')}
+            onClick={() => navigate('/maintenance')}
           >
             <Wrench className="size-4 mr-2" />
             Raise Request
@@ -151,18 +166,25 @@ export default function DashboardPage() {
             <CardTitle>Recent Activity</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
-            {ACTIVITY_ITEMS.map((item, idx) => (
-              <div
-                key={idx}
-                className="flex items-center gap-3 rounded-lg border border-border/50 bg-muted/30 px-4 py-3 transition-colors hover:bg-muted/60"
-              >
-                <item.icon className="size-4 shrink-0 text-muted-foreground" />
-                <span className="flex-1 text-sm">{item.text}</span>
-                <span className="text-xs text-muted-foreground whitespace-nowrap">
-                  {item.time}
-                </span>
-              </div>
-            ))}
+            {activities.map((item, idx) => {
+              // Map icons dynamically
+              const Icon = item.category === 'bookings' ? CalendarDays : item.category === 'approvals' ? ArrowRightLeft : Laptop;
+              return (
+                <div
+                  key={item.id || idx}
+                  className="flex items-center gap-3 rounded-lg border border-border/50 bg-muted/30 px-4 py-3 transition-colors hover:bg-muted/60"
+                >
+                  <Icon className="size-4 shrink-0 text-muted-foreground" />
+                  <span className="flex-1 text-sm">{item.msg}</span>
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">
+                    {item.time}
+                  </span>
+                </div>
+              );
+            })}
+            {activities.length === 0 && (
+              <p className="text-sm text-muted-foreground text-center py-4">No recent activity.</p>
+            )}
           </CardContent>
         </Card>
       </BlurFade>

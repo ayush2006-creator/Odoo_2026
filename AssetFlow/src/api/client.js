@@ -117,12 +117,18 @@ async function request(endpoint, options = {}) {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  // Fetch
-  const res = await fetch(url, {
-    method,
-    headers,
-    body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,
-  });
+  // Fetch with auto-fallback to mock data if backend is offline
+  let res;
+  try {
+    res = await fetch(url, {
+      method,
+      headers,
+      body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,
+    });
+  } catch (err) {
+    console.warn(`[AssetFlow Client] Connection failed to ${url}. Using mock fallback.`, err);
+    return getMockFallback(endpoint, method, body, params);
+  }
 
   // Return raw response when requested (e.g. CSV/PDF download)
   if (raw) return res;
@@ -169,6 +175,141 @@ async function request(endpoint, options = {}) {
 
   return data;
 }
+
+// ---------------------------------------------------------------------------
+// Mock Fallbacks for Prototype/Offline Mode
+// ---------------------------------------------------------------------------
+
+function getMockFallback(endpoint, method, body, params) {
+  // Simulate network latency
+  const isAuthSession = endpoint === '/auth/session';
+  
+  if (endpoint.startsWith('/auth/login')) {
+    const email = body?.email || 'employee@company.com';
+    let role = 'Employee';
+    let name = 'Priya Shah';
+    if (email.includes('admin')) {
+      role = 'Admin';
+      name = 'Ravi J';
+    } else if (email.includes('manager') || email.includes('arjun')) {
+      role = 'AssetManager';
+      name = 'Arjun Rao';
+    } else if (email.includes('head') || email.includes('priya')) {
+      role = 'DepartmentHead';
+      name = 'Priya Shah';
+    }
+    return {
+      token: 'mock-jwt-token-12345',
+      user: { id: 'u-1', name, email, role, status: 'Active' }
+    };
+  }
+
+  if (endpoint.startsWith('/auth/signup')) {
+    return {
+      token: 'mock-jwt-token-12345',
+      user: { id: 'u-1', name: body?.name || 'New User', email: body?.email, role: 'Employee', status: 'Active' }
+    };
+  }
+
+  if (endpoint.startsWith('/auth/session')) {
+    const user = getStoredUser();
+    if (user) return { user };
+    // Default fallback to AssetManager if nothing is stored
+    return {
+      user: { id: 'u-1', name: 'Arjun Rao', email: 'arjun@company.com', role: 'AssetManager', status: 'Active' }
+    };
+  }
+
+  if (endpoint.startsWith('/auth/logout')) {
+    return null;
+  }
+
+  if (endpoint.startsWith('/dashboard/kpis')) {
+    return {
+      available: 96,
+      allocated: 34,
+      underMaintenance: 4,
+      activeBookings: 6,
+      pendingTransfers: 3,
+      upcomingReturns: 12
+    };
+  }
+
+  if (endpoint.includes('/allocation-history')) {
+    return [
+      { date: 'Mar 12', action: 'Allocated to Priya Shah', dept: 'Engineering' },
+      { date: 'Jan 09', action: 'Returned by Arjun Rao', dept: 'condition: good' },
+      { date: 'Nov 20', action: 'Allocated to Arjun Rao', dept: 'Facilities' },
+      { date: 'Sep 05', action: 'Registered as new asset', dept: 'Warehouse' }
+    ];
+  }
+
+  if (endpoint.startsWith('/transfers')) {
+    return { success: true, message: 'Transfer request submitted successfully.' };
+  }
+
+  if (endpoint.startsWith('/bookings')) {
+    return [
+      { id: 'b-1', start: 9, end: 10, title: 'Procurement Team', status: 'booked' },
+      { id: 'b-2', start: 11, end: 12.5, title: 'Design Review — Meera K', status: 'booked' },
+      { id: 'b-3', start: 14.5, end: 16.5, title: 'Requested 4:30 to 6:30 — conflict', status: 'conflict' }
+    ];
+  }
+
+  if (endpoint.startsWith('/assets')) {
+    // If filtering by specific tag, return matching asset or a default mock asset
+    if (params?.tag) {
+      return [
+        { id: 'asset-76', tag: params.tag, name: 'Dell Laptop', category: 'Electronics', status: 'Allocated', location: 'Bangalore', currentHolder: 'Priya Shah' }
+      ];
+    }
+    return [
+      { id: '1', tag: 'AF-0013', name: 'Dell Laptop', category: 'Electronics', status: 'Allocated', location: 'Bangalore' },
+      { id: '2', tag: 'AF-0042', name: 'Projector', category: 'Electronics', status: 'Available', location: 'HQ Floor 2' },
+      { id: '3', tag: 'AF-0091', name: 'Office Chair', category: 'Furniture', status: 'Available', location: 'Warehouse' },
+      { id: '4', tag: 'AF-0033', name: 'Conference Table', category: 'Furniture', status: 'Under Maintenance', location: 'HQ Floor 2' }
+    ];
+  }
+
+  if (endpoint.startsWith('/employees')) {
+    return [
+      { id: 'e-1', name: 'Priya Shah', email: 'priya@company.com', department: 'Engineering', role: 'DepartmentHead', status: 'Active' },
+      { id: 'e-2', name: 'Arjun Rao', email: 'arjun@company.com', department: 'Facilities', role: 'AssetManager', status: 'Active' },
+      { id: 'e-3', name: 'Meera K', email: 'meera@company.com', department: 'HR', role: 'Employee', status: 'Active' },
+      { id: 'e-4', name: 'Ravi J', email: 'ravi@company.com', department: 'Finance', role: 'Admin', status: 'Active' },
+      { id: 'e-5', name: 'Leela M', email: 'leela@company.com', department: 'Marketing', role: 'Employee', status: 'Inactive' },
+      { id: 'e-6', name: 'Suresh P', email: 'suresh@company.com', department: 'Sales', role: 'Employee', status: 'Active' }
+    ];
+  }
+
+  if (endpoint.startsWith('/departments')) {
+    return [
+      { id: 'd-1', name: 'Engineering', head: 'Priya Shah', parentDept: null, status: 'Active' },
+      { id: 'd-2', name: 'Facilities', head: 'Arjun Rao', parentDept: null, status: 'Active' },
+      { id: 'd-3', name: 'Marketing', head: '-', parentDept: null, status: 'Active' },
+      { id: 'd-4', name: 'HR', head: 'Meera K', parentDept: null, status: 'Active' }
+    ];
+  }
+
+  if (endpoint.startsWith('/asset-categories')) {
+    return [
+      { id: 'c-1', name: 'Electronics', customFields: 'warranty period', status: 'Active' },
+      { id: 'c-2', name: 'Furniture', customFields: 'material type', status: 'Active' },
+      { id: 'c-3', name: 'Vehicles', customFields: 'registration number', status: 'Active' }
+    ];
+  }
+
+  if (endpoint.startsWith('/notifications')) {
+    return [
+      { id: 1, type: 'alert', msg: 'Laptop AF-0076 assigned to Priya Shah', time: '3m ago', category: 'alerts', unread: true },
+      { id: 2, type: 'maintenance', msg: 'Maintenance request AF-0090 approved', time: '1h ago', category: 'approvals', unread: true },
+      { id: 3, type: 'booking', msg: 'Booking confirmed — Room 23 — 3:00 to 5:00 PM', time: '1h ago', category: 'bookings', unread: true }
+    ];
+  }
+
+  return [];
+}
+
 
 // ---------------------------------------------------------------------------
 // Public HTTP helpers

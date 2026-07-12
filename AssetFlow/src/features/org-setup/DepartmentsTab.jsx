@@ -37,17 +37,7 @@ import { StatusBadge } from '@/components/shared/StatusBadge';
 import { usePermissions } from '@/hooks/usePermissions';
 import { ACTIONS } from '@/lib/permissions';
 
-// ---------------------------------------------------------------------------
-// Mock data
-// ---------------------------------------------------------------------------
-
-const INITIAL_DEPARTMENTS = [
-  { id: 1, name: 'Engineering',  parentDept: null,          head: 'Priya Shah', status: 'Active' },
-  { id: 2, name: 'Facilities',   parentDept: null,          head: 'Arjun Rao',  status: 'Active' },
-  { id: 3, name: 'Marketing',    parentDept: null,          head: '—',           status: 'Active' },
-  { id: 4, name: 'HR',           parentDept: null,          head: 'Meera K',     status: 'Active' },
-  { id: 5, name: 'Finance',      parentDept: 'Engineering', head: 'Ravi J',      status: 'Inactive' },
-];
+import { getDepartments } from '@/api/departments';
 
 // ---------------------------------------------------------------------------
 // Component
@@ -55,10 +45,26 @@ const INITIAL_DEPARTMENTS = [
 
 export function DepartmentsTab({ addDialogOpen, onAddDialogClose }) {
   const { can } = usePermissions();
-  const [departments, setDepartments] = useState(INITIAL_DEPARTMENTS);
+  const [departments, setDepartments] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingDept, setEditingDept] = useState(null);
   const [form, setForm] = useState({ name: '', parentDept: '', head: '' });
+
+  // Fetch departments on mount
+  useEffect(() => {
+    async function loadDepts() {
+      try {
+        const data = await getDepartments();
+        if (data) setDepartments(data);
+      } catch (err) {
+        console.error('Failed to load departments:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadDepts();
+  }, [addDialogOpen]);
 
   // Open add dialog when triggered from parent
   useEffect(() => {

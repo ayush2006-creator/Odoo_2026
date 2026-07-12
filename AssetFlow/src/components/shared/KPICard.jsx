@@ -3,7 +3,7 @@
  */
 
 import { MagicCard } from '@/components/ui/magic-card';
-import NumberTicker from '@/components/ui/number-ticker';
+import { NumberTicker } from '@/components/ui/number-ticker';
 import { useTheme } from '@/components/layout/ThemeProvider';
 
 export function KPICard({ title, value, icon: Icon, color = 'text-primary' }) {

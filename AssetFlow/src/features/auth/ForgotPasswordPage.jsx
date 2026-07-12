@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
-import Particles from '@/components/ui/particles';
+import { Particles } from '@/components/ui/particles';
 import { BlurFade } from '@/components/ui/blur-fade';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';

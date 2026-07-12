@@ -37,16 +37,7 @@ import { StatusBadge } from '@/components/shared/StatusBadge';
 import { usePermissions } from '@/hooks/usePermissions';
 import { ACTIONS } from '@/lib/permissions';
 
-// ---------------------------------------------------------------------------
-// Mock data
-// ---------------------------------------------------------------------------
-
-const INITIAL_CATEGORIES = [
-  { id: 1, name: 'Electronics',  customFields: 'Warranty Period',       status: 'Active' },
-  { id: 2, name: 'Furniture',    customFields: 'Material Type',         status: 'Active' },
-  { id: 3, name: 'Vehicles',     customFields: 'Registration Number',   status: 'Active' },
-  { id: 4, name: 'Stationery',   customFields: '—',                     status: 'Active' },
-];
+import { getAssetCategories } from '@/api/assetCategories';
 
 // ---------------------------------------------------------------------------
 // Component
@@ -54,10 +45,26 @@ const INITIAL_CATEGORIES = [
 
 export function CategoriesTab({ addDialogOpen, onAddDialogClose }) {
   const { can } = usePermissions();
-  const [categories, setCategories] = useState(INITIAL_CATEGORIES);
+  const [categories, setCategories] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingCat, setEditingCat] = useState(null);
   const [form, setForm] = useState({ name: '', customFields: '' });
+
+  // Fetch categories on mount
+  useEffect(() => {
+    async function loadCats() {
+      try {
+        const data = await getAssetCategories();
+        if (data) setCategories(data);
+      } catch (err) {
+        console.error('Failed to load categories:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadCats();
+  }, [addDialogOpen]);
 
   // Open add dialog when triggered from parent
   useEffect(() => {
