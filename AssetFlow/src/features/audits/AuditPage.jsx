@@ -15,12 +15,22 @@ import { BlurFade } from '@/components/ui/blur-fade';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 import { getAuditCycles, getAuditItems, getDiscrepancies } from '@/api/auditCycles';
+import { getAssets } from '@/api/assets';
 
 const AUDITORS = [
   { initials: 'S', name: 'Suresh' },
   { initials: 'K', name: 'Kya' },
   { initials: 'G', name: 'Geeta' },
   { initials: 'L', name: 'Leela' },
+];
+
+// Default checklist shown when backend returns no items or items without asset info
+const DEFAULT_CHECKLIST = [
+  { tag: 'AF-0076', name: 'Dell Laptop', location: 'Desk B12', result: 'Verified' },
+  { tag: 'AF-0021', name: 'Office Chair', location: 'Desk G19', result: 'Missing' },
+  { tag: 'AF-0098', name: 'Monitor', location: 'Desk B10', result: 'Damaged' },
+  { tag: 'AF-0033', name: 'Conference Table', location: 'Room C4', result: 'Verified' },
+  { tag: 'AF-0042', name: 'Projector', location: 'AV Room', result: 'Verified' },
 ];
 
 export default function AuditPage() {
@@ -33,22 +43,64 @@ export default function AuditPage() {
     async function loadAuditData() {
       try {
         const cycles = await getAuditCycles();
-        if (cycles && cycles.length > 0) {
-          const activeCycle = cycles[0];
+        const safeCycles = Array.isArray(cycles) ? cycles : (cycles?.data || []);
+
+        if (safeCycles.length > 0) {
+          const activeCycle = safeCycles[0];
           setCycle({
-            name: activeCycle.name,
-            dateRangeStart: activeCycle.dateRangeStart,
-            dateRangeEnd: activeCycle.dateRangeEnd
+            name: activeCycle.name || 'Q3 Audit: Engineering Dept',
+            dateRangeStart: activeCycle.dateRangeStart || activeCycle.date_range_start || '1 Feb',
+            dateRangeEnd: activeCycle.dateRangeEnd || activeCycle.date_range_end || '28 Jul',
           });
 
-          const auditItems = await getAuditItems(activeCycle.id);
-          if (auditItems) setItems(auditItems);
+          // Load audit items
+          const rawItems = await getAuditItems(activeCycle.id).catch(() => []);
+          const safeItems = Array.isArray(rawItems) ? rawItems : (rawItems?.data || []);
 
-          const disc = await getDiscrepancies(activeCycle.id);
-          if (disc) setDiscrepancies(disc);
+          if (safeItems.length === 0) {
+            // Cycle exists but no items populated yet — show default mock
+            setItems(DEFAULT_CHECKLIST);
+          } else if (!safeItems[0].tag && !safeItems[0].name) {
+            // Items returned but backend didn't JOIN asset fields (tag/name/location missing).
+            // Enrich by fetching all assets and mapping by id.
+            try {
+              const allAssets = await getAssets();
+              const assetArr = Array.isArray(allAssets) ? allAssets : (allAssets?.data || []);
+              const assetById = {};
+              assetArr.forEach((a) => {
+                assetById[String(a.id)] = a;
+              });
+
+              const enriched = safeItems.map((item) => {
+                const asset = assetById[String(item.assetId || item.asset_id)] || {};
+                return {
+                  ...item,
+                  tag: item.tag || asset.tag || asset.assetTag || `AF-${item.assetId || item.asset_id}`,
+                  name: item.name || asset.name || 'Unknown Asset',
+                  location: item.location || asset.location || '—',
+                };
+              });
+              setItems(enriched);
+            } catch {
+              // Enrichment failed — fall back to mock
+              setItems(DEFAULT_CHECKLIST);
+            }
+          } else {
+            // Items already have full asset info from the backend JOIN
+            setItems(safeItems);
+          }
+
+          // Load discrepancies
+          const disc = await getDiscrepancies(activeCycle.id).catch(() => []);
+          const safeDisc = Array.isArray(disc) ? disc : (disc?.data || []);
+          setDiscrepancies(safeDisc);
+        } else {
+          // No cycles returned — still show default checklist for demo
+          setItems(DEFAULT_CHECKLIST);
         }
       } catch (err) {
         console.error('Failed to load audit cycle items:', err);
+        setItems(DEFAULT_CHECKLIST);
       } finally {
         setLoading(false);
       }

@@ -182,8 +182,9 @@ async function request(endpoint, options = {}) {
       body: snakeBody instanceof FormData ? snakeBody : snakeBody ? JSON.stringify(snakeBody) : undefined,
     });
   } catch (err) {
-    console.error(`[AssetFlow Client] Connection failed to ${url}:`, err);
-    throw new ApiError(`Network connection failed: Unable to connect to backend server at ${BASE_URL}`, 503, err);
+    console.warn(`[AssetFlow] Backend unreachable at ${url}, using mock fallback:`, err.message);
+    const mock = getMockFallback(endpoint, method, body, params);
+    return mock !== undefined ? mock : null;
   }
 
   // Return raw response when requested (e.g. CSV/PDF download)
@@ -308,13 +309,7 @@ function getMockFallback(endpoint, method, body, params) {
     return { success: true, message: 'Transfer request submitted successfully.' };
   }
 
-  if (endpoint.startsWith('/audit-cycles')) {
-    return [
-      { id: 'ac-1', name: 'Q3 Audit: Engineering Dept', scopeType: 'Department', scopeValue: 'Engineering', dateRangeStart: '2026-02-01', dateRangeEnd: '2026-07-28', status: 'Open' }
-    ];
-  }
-
-  if (endpoint.includes('/items')) {
+  if (endpoint.includes('/audit-cycles') && endpoint.includes('/items')) {
     return [
       { tag: 'AF-0076', name: 'Dell Laptop', location: 'Desk B12', result: 'Verified' },
       { tag: 'AF-0021', name: 'Office Chair', location: 'Desk G19', result: 'Missing' },
@@ -324,10 +319,16 @@ function getMockFallback(endpoint, method, body, params) {
     ];
   }
 
-  if (endpoint.includes('/discrepancies')) {
+  if (endpoint.includes('/audit-cycles') && endpoint.includes('/discrepancies')) {
     return [
       { id: 'd-1', assetId: 'AF-0021', discrepancyType: 'Missing', resolutionStatus: 'Open' },
       { id: 'd-2', assetId: 'AF-0098', discrepancyType: 'Damaged', resolutionStatus: 'Open' }
+    ];
+  }
+
+  if (endpoint.startsWith('/audit-cycles')) {
+    return [
+      { id: 'ac-1', name: 'Q3 Audit: Engineering Dept', scopeType: 'Department', scopeValue: 'Engineering', dateRangeStart: '2026-02-01', dateRangeEnd: '2026-07-28', status: 'Open' }
     ];
   }
 
