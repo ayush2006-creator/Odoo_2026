@@ -18,7 +18,7 @@ import { BlurFade } from '@/components/ui/blur-fade';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 import { getEmployees } from '@/api/employees';
-import { getAssets, getAssetAllocationHistory } from '@/api/assets';
+import { getAssets, getAssetAllocationHistory, getAsset } from '@/api/assets';
 import { createTransfer, getTransfers, approveTransfer, rejectTransfer } from '@/api/transfers';
 import { createAllocation, getAllocations, returnAllocation } from '@/api/allocations';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -35,6 +35,7 @@ export default function AllocationPage() {
   const [employees, setEmployees] = useState([]);
   const [history, setHistory] = useState([]);
   const [transfers, setTransfers] = useState([]);
+  const [transferAssetMap, setTransferAssetMap] = useState({});
   
   const [toEmployee, setToEmployee] = useState('');
   const [reason, setReason] = useState('');
@@ -107,11 +108,41 @@ export default function AllocationPage() {
     loadTransfers();
   }, [loadTransfers, selectedAsset]);
 
+  useEffect(() => {
+    async function fetchMissingAssets() {
+      const missingIds = transfers
+        .map(t => String(t.assetId || t.asset_id))
+        .filter(id => id && !assets.some(a => String(a.id) === id) && !transferAssetMap[id]);
+      
+      const uniqueMissing = [...new Set(missingIds)];
+      if (uniqueMissing.length === 0) return;
+
+      try {
+        const fetched = await Promise.all(
+          uniqueMissing.map(id => getAsset(id).catch(() => null))
+        );
+        const newMap = { ...transferAssetMap };
+        fetched.forEach(a => {
+          if (a) newMap[String(a.id)] = a;
+        });
+        setTransferAssetMap(newMap);
+      } catch (err) {
+        console.warn('Failed to fetch transfer assets:', err);
+      }
+    }
+    fetchMissingAssets();
+  }, [transfers, assets, transferAssetMap]);
+
   const safeEmployees = Array.isArray(employees) ? employees : [];
   const safeAssets = Array.isArray(assets) ? assets : [];
   const safeHistory = Array.isArray(history) ? history : [];
   const pendingTransfers = Array.isArray(transfers)
-    ? transfers.filter(t => t && (t.status === 'Pending' || t.status === 'pending'))
+    ? transfers.filter(t => t && (
+        t.status === 'Pending' ||
+        t.status === 'pending' ||
+        t.status === 'Requested' ||
+        t.status === 'requested'
+      ))
     : [];
 
   const currentHolderName = selectedAsset?.currentHolderType === 'Employee' && selectedAsset?.currentHolderId
@@ -346,68 +377,75 @@ export default function AllocationPage() {
       </BlurFade>
 
       {/* Administrative Approval Control Panel */}
-      {can(ACTIONS.TRANSFER_APPROVE) && pendingTransfers.length > 0 && (
+      {can(ACTIONS.TRANSFER_APPROVE) && (
         <BlurFade delay={0.18} inView>
           <Card className="border-t-2 border-t-primary">
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
                 <ArrowRight className="size-4 text-primary" />
-                Pending Transfer Approvals (Admin)
+                Pending Transfer & Allocation Approvals
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              {pendingTransfers.map((req) => {
-                const isCurrent = selectedAsset && req.assetId === selectedAsset.id;
-                return (
-                  <div
-                    key={req.id}
-                    className={`p-4 rounded-lg border transition-colors ${
-                      isCurrent
-                        ? 'bg-primary/5 border-primary/30'
-                        : 'border-border/60 bg-card'
-                    }`}
-                  >
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div>
-                        <span className="font-mono text-xs font-semibold text-primary">
-                          {req.asset?.assetTag || req.asset?.tag || `Asset #${req.assetId}`}
-                        </span>
-                        <h4 className="text-sm font-semibold mb-1">
-                          {req.asset?.name || 'Asset Transfer'}
-                        </h4>
-                        <p className="text-xs text-muted-foreground">
-                          From: <span className="font-medium text-foreground">{getEmployeeName(req.fromHolderId)}</span>{' '}
-                          → To: <span className="font-medium text-foreground">{getEmployeeName(req.toHolderId)}</span>
-                        </p>
-                        {req.reason && (
-                          <p className="text-xs italic text-muted-foreground mt-1">
-                            Reason: "{req.reason}"
+              {pendingTransfers.length > 0 ? (
+                pendingTransfers.map((req) => {
+                  const isCurrent = selectedAsset && req.assetId === selectedAsset.id;
+                  const matchedAsset = safeAssets.find(a => String(a.id) === String(req.assetId)) || transferAssetMap[String(req.assetId)] || req.asset || {};
+                  return (
+                    <div
+                      key={req.id}
+                      className={`p-4 rounded-lg border transition-colors ${
+                        isCurrent
+                          ? 'bg-primary/5 border-primary/30'
+                          : 'border-border/60 bg-card'
+                      }`}
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div>
+                          <span className="font-mono text-xs font-semibold text-primary">
+                            {matchedAsset.tag || matchedAsset.assetTag || matchedAsset.asset_tag || `Asset #${req.assetId}`}
+                          </span>
+                          <h4 className="text-sm font-semibold mb-1">
+                            {matchedAsset.name || 'Asset Transfer'}
+                          </h4>
+                          <p className="text-xs text-muted-foreground">
+                            From: <span className="font-medium text-foreground">{getEmployeeName(req.fromHolderId)}</span>{' '}
+                            → To: <span className="font-medium text-foreground">{getEmployeeName(req.toHolderId)}</span>
                           </p>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0 sm:ml-auto">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="text-destructive border-destructive/20 hover:bg-destructive/10"
-                          onClick={() => handleRejectTransfer(req.id)}
-                          disabled={submitting}
-                        >
-                          Reject
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="default"
-                          onClick={() => handleApproveTransfer(req.id)}
-                          disabled={submitting}
-                        >
-                          Approve & Execute
-                        </Button>
+                          {req.reason && (
+                            <p className="text-xs italic text-muted-foreground mt-1">
+                              Reason: "{req.reason}"
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0 sm:ml-auto">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="text-destructive border-destructive/20 hover:bg-destructive/10"
+                            onClick={() => handleRejectTransfer(req.id)}
+                            disabled={submitting}
+                          >
+                            Reject
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="default"
+                            onClick={() => handleApproveTransfer(req.id)}
+                            disabled={submitting}
+                          >
+                            Approve & Execute
+                          </Button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              ) : (
+                <p className="text-sm text-muted-foreground text-center py-6">
+                  No pending transfer or allocation requests.
+                </p>
+              )}
             </CardContent>
           </Card>
         </BlurFade>

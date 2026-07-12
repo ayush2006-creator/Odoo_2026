@@ -34,7 +34,7 @@ import { BlurFade } from '@/components/ui/blur-fade';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { usePermissions } from '@/hooks/usePermissions';
 import { ACTIONS } from '@/lib/permissions';
-import { getAssets } from '@/api/assets';
+import { getAssets, getAsset } from '@/api/assets';
 import { getEmployees } from '@/api/employees';
 import {
   getMaintenanceRequests,
@@ -270,6 +270,28 @@ export default function MaintenancePage() {
 
       const tickets = await getMaintenanceRequests();
       if (tickets) {
+        // Find any asset IDs that are not present in our map
+        const missingAssetIds = [...new Set(tickets
+          .map(t => String(t.assetId || t.asset_id))
+          .filter(id => id && !map[id])
+        )];
+
+        if (missingAssetIds.length > 0) {
+          try {
+            const fetched = await Promise.all(
+              missingAssetIds.map(id => getAsset(id).catch(() => null))
+            );
+            fetched.forEach(a => {
+              if (a) {
+                map[String(a.id)] = a;
+              }
+            });
+            setAssetMap({ ...map });
+          } catch (err) {
+            console.warn('Failed to fetch missing assets for tickets:', err);
+          }
+        }
+
         const newCols = {
           pending: [],
           approved: [],
