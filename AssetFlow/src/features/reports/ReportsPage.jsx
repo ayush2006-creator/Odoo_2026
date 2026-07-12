@@ -2,29 +2,20 @@
  * ReportsPage — Screen 9: Reports & Analytics with Recharts.
  */
 
+import { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { FileDown, TrendingUp, Clock, AlertTriangle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ShimmerButton } from '@/components/ui/shimmer-button';
 import { BlurFade } from '@/components/ui/blur-fade';
 import { PageHeader } from '@/components/shared/PageHeader';
-
-const UTILIZATION_DATA = [
-  { dept: 'Engineering', value: 85 },
-  { dept: 'Facilities', value: 62 },
-  { dept: 'Marketing', value: 45 },
-  { dept: 'HR', value: 30 },
-  { dept: 'Finance', value: 55 },
-];
-
-const MAINTENANCE_DATA = [
-  { month: 'Jan', count: 12 },
-  { month: 'Feb', count: 8 },
-  { month: 'Mar', count: 15 },
-  { month: 'Apr', count: 6 },
-  { month: 'May', count: 10 },
-  { month: 'Jun', count: 14 },
-];
+import {
+  getUtilizationReport,
+  getMaintenanceFrequencyReport,
+  getDueForMaintenanceReport,
+  exportReport,
+  downloadReport,
+} from '@/api/reports';
 
 const MOST_USED = [
   { tag: 'AF-0013', name: 'Dell Laptop', stat: 'used 67 days' },
@@ -35,11 +26,6 @@ const MOST_USED = [
 const IDLE_ASSETS = [
   { tag: 'AF-0077', name: 'Scanner', stat: 'unused 62 days' },
   { tag: 'AF-0042', name: 'Fax Machine', stat: 'unused 45 days' },
-];
-
-const DUE_MAINTENANCE = [
-  { tag: 'AF-0098', name: 'UPS', stat: 'service due in 5 days' },
-  { tag: 'AF-0021', name: 'Laptop', stat: '6 years old, nearing retirement' },
 ];
 
 function ChartTooltipContent({ active, payload, label }) {
@@ -77,6 +63,40 @@ function SummaryCard({ title, icon: Icon, items }) {
 }
 
 export default function ReportsPage() {
+  const [utilizationData, setUtilizationData] = useState([]);
+  const [maintenanceData, setMaintenanceData] = useState([]);
+  const [dueMaintenance, setDueMaintenance] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadReportData() {
+      try {
+        const util = await getUtilizationReport();
+        if (util) setUtilizationData(util);
+
+        const freq = await getMaintenanceFrequencyReport();
+        if (freq) setMaintenanceData(freq);
+
+        const due = await getDueForMaintenanceReport();
+        if (due) setDueMaintenance(due);
+      } catch (err) {
+        console.error('Failed to load reports data:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadReportData();
+  }, []);
+
+  const handleExport = async () => {
+    try {
+      const response = await exportReport('utilization', 'csv');
+      await downloadReport(response, 'utilization_report.csv');
+    } catch (err) {
+      console.error('Failed to export report:', err);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader title="Reports & Analytics" description="Insights into asset utilization, maintenance, and performance." />
@@ -90,7 +110,7 @@ export default function ReportsPage() {
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={250}>
-                <BarChart data={UTILIZATION_DATA}>
+                <BarChart data={utilizationData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                   <XAxis dataKey="dept" tick={{ fontSize: 11 }} stroke="var(--muted-foreground)" />
                   <YAxis stroke="var(--muted-foreground)" tick={{ fontSize: 11 }} />
@@ -109,7 +129,7 @@ export default function ReportsPage() {
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={250}>
-                <BarChart data={MAINTENANCE_DATA}>
+                <BarChart data={maintenanceData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                   <XAxis dataKey="month" tick={{ fontSize: 11 }} stroke="var(--muted-foreground)" />
                   <YAxis stroke="var(--muted-foreground)" tick={{ fontSize: 11 }} />
@@ -131,14 +151,14 @@ export default function ReportsPage() {
           <SummaryCard title="Idle Assets" icon={Clock} items={IDLE_ASSETS} />
         </BlurFade>
         <BlurFade delay={0.25} inView>
-          <SummaryCard title="Due for Maintenance" icon={AlertTriangle} items={DUE_MAINTENANCE} />
+          <SummaryCard title="Due for Maintenance" icon={AlertTriangle} items={dueMaintenance} />
         </BlurFade>
       </div>
 
       {/* Export */}
       <BlurFade delay={0.3} inView>
         <div className="flex justify-center">
-          <ShimmerButton className="shadow-lg">
+          <ShimmerButton className="shadow-lg" onClick={handleExport}>
             <FileDown className="size-4 mr-2" />
             Export Report
           </ShimmerButton>

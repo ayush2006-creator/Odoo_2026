@@ -2,7 +2,8 @@
  * AuditPage — Screen 8: Audit cycle checklist & discrepancy report.
  */
 
-import { AlertTriangle, ClipboardCheck, UserCircle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { AlertTriangle, ClipboardCheck } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -13,6 +14,7 @@ import {
 import { BlurFade } from '@/components/ui/blur-fade';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { StatusBadge } from '@/components/shared/StatusBadge';
+import { getAuditCycles, getAuditItems, getDiscrepancies } from '@/api/auditCycles';
 
 const AUDITORS = [
   { initials: 'S', name: 'Suresh' },
@@ -21,15 +23,39 @@ const AUDITORS = [
   { initials: 'L', name: 'Leela' },
 ];
 
-const AUDIT_ITEMS = [
-  { tag: 'AF-0076', name: 'Dell Laptop', location: 'Desk B12', result: 'Verified' },
-  { tag: 'AF-0021', name: 'Office Chair', location: 'Desk G19', result: 'Missing' },
-  { tag: 'AF-0098', name: 'Monitor', location: 'Desk B10', result: 'Damaged' },
-  { tag: 'AF-0033', name: 'Conference Table', location: 'Room C4', result: 'Verified' },
-  { tag: 'AF-0042', name: 'Projector', location: 'AV Room', result: 'Verified' },
-];
-
 export default function AuditPage() {
+  const [cycle, setCycle] = useState({ name: 'Q3 Audit: Engineering Dept', dateRangeStart: '1 Feb', dateRangeEnd: '28 Jul' });
+  const [items, setItems] = useState([]);
+  const [discrepancies, setDiscrepancies] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadAuditData() {
+      try {
+        const cycles = await getAuditCycles();
+        if (cycles && cycles.length > 0) {
+          const activeCycle = cycles[0];
+          setCycle({
+            name: activeCycle.name,
+            dateRangeStart: activeCycle.dateRangeStart,
+            dateRangeEnd: activeCycle.dateRangeEnd
+          });
+
+          const auditItems = await getAuditItems(activeCycle.id);
+          if (auditItems) setItems(auditItems);
+
+          const disc = await getDiscrepancies(activeCycle.id);
+          if (disc) setDiscrepancies(disc);
+        }
+      } catch (err) {
+        console.error('Failed to load audit cycle items:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadAuditData();
+  }, []);
+
   return (
     <div className="space-y-6">
       <PageHeader title="Audit" description="Manage audit cycles and verify asset inventory." />
@@ -40,8 +66,10 @@ export default function AuditPage() {
           <CardContent className="py-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
-                <h3 className="font-semibold text-lg">Q3 Audit: Engineering Dept</h3>
-                <p className="text-sm text-muted-foreground">1 Feb to 28 Jul</p>
+                <h3 className="font-semibold text-lg">{cycle.name}</h3>
+                <p className="text-sm text-muted-foreground">
+                  {cycle.dateRangeStart} to {cycle.dateRangeEnd}
+                </p>
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-xs text-muted-foreground mr-1">Auditors:</span>
@@ -79,7 +107,7 @@ export default function AuditPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {AUDIT_ITEMS.map((item) => (
+                {items.map((item) => (
                   <TableRow key={item.tag}>
                     <TableCell>
                       <div>
@@ -91,6 +119,13 @@ export default function AuditPage() {
                     <TableCell><StatusBadge status={item.result} /></TableCell>
                   </TableRow>
                 ))}
+                {items.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={3} className="text-center py-6 text-muted-foreground">
+                      No audit checklist items found.
+                    </TableCell>
+                  </TableRow>
+                )}
               </TableBody>
             </Table>
           </CardContent>
@@ -98,15 +133,17 @@ export default function AuditPage() {
       </BlurFade>
 
       {/* Discrepancy Alert */}
-      <BlurFade delay={0.15} inView>
-        <Alert className="border-amber-500/30 bg-amber-500/5">
-          <AlertTriangle className="size-4 text-amber-600" />
-          <AlertTitle className="text-amber-700 dark:text-amber-400">Discrepancies Found</AlertTitle>
-          <AlertDescription className="text-amber-600 dark:text-amber-300">
-            2 assets flagged — discrepancy report generated automatically.
-          </AlertDescription>
-        </Alert>
-      </BlurFade>
+      {discrepancies.length > 0 && (
+        <BlurFade delay={0.15} inView>
+          <Alert className="border-amber-500/30 bg-amber-500/5">
+            <AlertTriangle className="size-4 text-amber-600" />
+            <AlertTitle className="text-amber-700 dark:text-amber-400">Discrepancies Found</AlertTitle>
+            <AlertDescription className="text-amber-600 dark:text-amber-300">
+              {discrepancies.length} assets flagged — discrepancy report generated automatically.
+            </AlertDescription>
+          </Alert>
+        </BlurFade>
+      )}
 
       <BlurFade delay={0.2} inView>
         <div className="flex justify-end">

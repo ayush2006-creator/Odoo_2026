@@ -9,24 +9,26 @@ import { get, post, setToken, clearToken, setStoredUser, clearStoredUser } from 
 
 /**
  * Register a new employee account.
- * Role is always Employee — never exposed at signup (see modelsAndEndpoints.md §3).
+ * Signup returns the created UserResponse directly (no token).
  * @param {{ name: string, email: string, password: string }} data
  */
 export async function signup(data) {
   const res = await post('/auth/signup', data);
-  if (res?.token) setToken(res.token);
-  if (res?.user) setStoredUser(res.user);
   return res;
 }
 
 /**
- * Authenticate and receive a session token.
+ * Authenticate and receive a session token, then fetch user profile.
  * @param {{ email: string, password: string }} data
  */
 export async function login(data) {
   const res = await post('/auth/login', data);
-  if (res?.token) setToken(res.token);
-  if (res?.user) setStoredUser(res.user);
+  if (res?.accessToken) {
+    setToken(res.accessToken);
+    // Fetch user profile immediately after login to retrieve role
+    const user = await getSession();
+    return { ...res, user };
+  }
   return res;
 }
 
@@ -34,9 +36,14 @@ export async function login(data) {
  * End the current session.
  */
 export async function logout() {
-  await post('/auth/logout');
-  clearToken();
-  clearStoredUser();
+  try {
+    await post('/auth/logout');
+  } catch (err) {
+    console.error('Logout request failed:', err);
+  } finally {
+    clearToken();
+    clearStoredUser();
+  }
 }
 
 /**
@@ -57,10 +64,12 @@ export function resetPassword(data) {
 
 /**
  * Validate the current session and return the logged-in user.
- * Useful on app mount to check if the stored token is still valid.
+ * Backend /session returns the UserResponse object directly.
  */
 export async function getSession() {
   const res = await get('/auth/session');
-  if (res?.user) setStoredUser(res.user);
+  if (res && res.id) {
+    setStoredUser(res);
+  }
   return res;
 }

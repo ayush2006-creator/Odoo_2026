@@ -80,6 +80,45 @@ export function clearStoredUser() {
 }
 
 // ---------------------------------------------------------------------------
+// Key Translation Helpers (camelCase ↔ snake_case)
+// ---------------------------------------------------------------------------
+
+function camelToSnake(obj) {
+  if (Array.isArray(obj)) {
+    return obj.map(camelToSnake);
+  }
+  if (obj !== null && typeof obj === 'object' && !(obj instanceof FormData)) {
+    return Object.keys(obj).reduce((acc, key) => {
+      const snakeKey = key.replace(/([A-Z])/g, "_$1").toLowerCase();
+      acc[snakeKey] = camelToSnake(obj[key]);
+      return acc;
+    }, {});
+  }
+  return obj;
+}
+
+function snakeToCamel(obj) {
+  if (Array.isArray(obj)) {
+    return obj.map(snakeToCamel);
+  }
+  if (obj !== null && typeof obj === 'object') {
+    return Object.keys(obj).reduce((acc, key) => {
+      const camelKey = key.replace(/(_\w)/g, (m) => m[1].toUpperCase());
+      const value = snakeToCamel(obj[key]);
+      acc[camelKey] = value;
+      
+      // Alias/fallback helpers to map backend properties directly to frontend schemas
+      if (key === 'asset_tag') acc['tag'] = value;
+      if (key === 'parent_department_id') acc['parentDept'] = value;
+      if (key === 'department_head_id') acc['head'] = value;
+      
+      return acc;
+    }, {});
+  }
+  return obj;
+}
+
+// ---------------------------------------------------------------------------
 // Core request function
 // ---------------------------------------------------------------------------
 
@@ -92,11 +131,16 @@ async function request(endpoint, options = {}) {
     raw = false, // if true, return the raw Response (useful for file downloads)
   } = options;
 
-  // Build URL with query params
-  let url = `${BASE_URL}${endpoint}`;
-  if (params) {
+  // Clean up duplicate slashes between BASE_URL and endpoint
+  const baseUrlClean = BASE_URL.endsWith('/') ? BASE_URL.slice(0, -1) : BASE_URL;
+  const endpointClean = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  let url = `${baseUrlClean}${endpointClean}`;
+  
+  // Transform params to snake_case for the Python backend
+  const snakeParams = params ? camelToSnake(params) : null;
+  if (snakeParams) {
     const searchParams = new URLSearchParams();
-    Object.entries(params).forEach(([key, value]) => {
+    Object.entries(snakeParams).forEach(([key, value]) => {
       if (value !== undefined && value !== null && value !== '') {
         searchParams.append(key, value);
       }
@@ -117,17 +161,20 @@ async function request(endpoint, options = {}) {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  // Fetch with auto-fallback to mock data if backend is offline
+  // Transform body to snake_case for the Python backend
+  const snakeBody = body && !(body instanceof FormData) ? camelToSnake(body) : body;
+
+  // Fetch from actual backend server
   let res;
   try {
     res = await fetch(url, {
       method,
       headers,
-      body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,
+      body: snakeBody instanceof FormData ? snakeBody : snakeBody ? JSON.stringify(snakeBody) : undefined,
     });
   } catch (err) {
-    console.warn(`[AssetFlow Client] Connection failed to ${url}. Using mock fallback.`, err);
-    return getMockFallback(endpoint, method, body, params);
+    console.error(`[AssetFlow Client] Connection failed to ${url}:`, err);
+    throw new ApiError(`Network connection failed: Unable to connect to backend server at ${BASE_URL}`, 503, err);
   }
 
   // Return raw response when requested (e.g. CSV/PDF download)
@@ -141,36 +188,40 @@ async function request(endpoint, options = {}) {
   const contentType = res.headers.get('Content-Type') || '';
   if (contentType.includes('application/json')) {
     data = await res.json();
+    // Transform incoming response keys to camelCase for the frontend
+    data = snakeToCamel(data);
   }
 
   // --- Error handling -------------------------------------------------------
 
   if (!res.ok) {
+    // Transform error body keys if present
+    const errorData = data ? snakeToCamel(data) : null;
+
     // 401 Unauthorized → session expired / invalid token
     if (res.status === 401) {
       clearToken();
       clearStoredUser();
-      // Only redirect if we're in a browser context
-      if (typeof window !== 'undefined') {
+      // Only redirect if we're in a browser context and NOT already on the login page
+      if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
         window.location.href = '/login';
       }
-      throw new ApiError('Session expired. Please log in again.', 401, data);
+      throw new ApiError('Session expired. Please log in again.', 401, errorData);
     }
 
     // 409 Conflict → allocation or booking conflict
-    // The response body contains the conflict details (current holder, overlapping booking, etc.)
     if (res.status === 409) {
       throw new ApiError(
-        data?.message || 'Conflict — the resource is already in use.',
+        errorData?.message || errorData?.detail?.message || 'Conflict — the resource is already in use.',
         409,
-        data,
+        errorData,
       );
     }
 
     // Generic error
     const message =
-      data?.message || data?.error || `Request failed with status ${res.status}`;
-    throw new ApiError(message, res.status, data);
+      errorData?.message || errorData?.detail || errorData?.error || `Request failed with status ${res.status}`;
+    throw new ApiError(message, res.status, errorData);
   }
 
   return data;
@@ -246,6 +297,57 @@ function getMockFallback(endpoint, method, body, params) {
 
   if (endpoint.startsWith('/transfers')) {
     return { success: true, message: 'Transfer request submitted successfully.' };
+  }
+
+  if (endpoint.startsWith('/audit-cycles')) {
+    return [
+      { id: 'ac-1', name: 'Q3 Audit: Engineering Dept', scopeType: 'Department', scopeValue: 'Engineering', dateRangeStart: '2026-02-01', dateRangeEnd: '2026-07-28', status: 'Open' }
+    ];
+  }
+
+  if (endpoint.includes('/items')) {
+    return [
+      { tag: 'AF-0076', name: 'Dell Laptop', location: 'Desk B12', result: 'Verified' },
+      { tag: 'AF-0021', name: 'Office Chair', location: 'Desk G19', result: 'Missing' },
+      { tag: 'AF-0098', name: 'Monitor', location: 'Desk B10', result: 'Damaged' },
+      { tag: 'AF-0033', name: 'Conference Table', location: 'Room C4', result: 'Verified' },
+      { tag: 'AF-0042', name: 'Projector', location: 'AV Room', result: 'Verified' }
+    ];
+  }
+
+  if (endpoint.includes('/discrepancies')) {
+    return [
+      { id: 'd-1', assetId: 'AF-0021', discrepancyType: 'Missing', resolutionStatus: 'Open' },
+      { id: 'd-2', assetId: 'AF-0098', discrepancyType: 'Damaged', resolutionStatus: 'Open' }
+    ];
+  }
+
+  if (endpoint.startsWith('/reports/utilization')) {
+    return [
+      { dept: 'Engineering', value: 85 },
+      { dept: 'Facilities', value: 62 },
+      { dept: 'Marketing', value: 45 },
+      { dept: 'HR', value: 30 },
+      { dept: 'Finance', value: 55 }
+    ];
+  }
+
+  if (endpoint.startsWith('/reports/maintenance-frequency')) {
+    return [
+      { month: 'Jan', count: 12 },
+      { month: 'Feb', count: 8 },
+      { month: 'Mar', count: 15 },
+      { month: 'Apr', count: 6 },
+      { month: 'May', count: 10 },
+      { month: 'Jun', count: 14 }
+    ];
+  }
+
+  if (endpoint.startsWith('/reports/due-for-maintenance-or-retirement')) {
+    return [
+      { tag: 'AF-0098', name: 'UPS', stat: 'service due in 5 days' },
+      { tag: 'AF-0021', name: 'Laptop', stat: '6 years old, nearing retirement' }
+    ];
   }
 
   if (endpoint.startsWith('/bookings')) {

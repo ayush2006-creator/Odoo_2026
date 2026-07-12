@@ -54,5 +54,5 @@ export function returnAllocation(id, data) {
  * List overdue allocations (Admin, AssetManager).
  */
 export function getOverdueAllocations() {
-  return get('/allocations/overdue');
+  return get('/dashboard/overdue');
 }

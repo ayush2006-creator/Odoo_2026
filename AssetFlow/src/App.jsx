@@ -8,9 +8,8 @@ import { AppLayout } from '@/components/layout/AppLayout';
 import { ProtectedRoute } from '@/routes/ProtectedRoute';
 import { ROLES } from '@/lib/roles';
 import { TooltipProvider } from '@/components/ui/tooltip';
-
-// Lazy-load feature pages
-import { lazy, Suspense } from 'react';
+import { useEffect, lazy, Suspense } from 'react';
+import { getSession } from '@/api/auth';
 
 const LoginPage = lazy(() => import('@/features/auth/LoginPage'));
 const SignupPage = lazy(() => import('@/features/auth/SignupPage'));
@@ -34,6 +33,21 @@ function PageLoader() {
 }
 
 function App() {
+  // Validate current session on app load
+  useEffect(() => {
+    async function verifySession() {
+      try {
+        const token = localStorage.getItem('assetflow_token');
+        if (token) {
+          await getSession();
+        }
+      } catch (err) {
+        console.error('Session verification failed on app load:', err);
+      }
+    }
+    verifySession();
+  }, []);
+
   return (
     <ThemeProvider defaultTheme="dark">
       <TooltipProvider>
