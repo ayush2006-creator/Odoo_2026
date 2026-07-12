@@ -12,10 +12,14 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
 import { ShimmerButton } from '@/components/ui/shimmer-button';
 import { BlurFade } from '@/components/ui/blur-fade';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { getAssetBookings, createBooking } from '@/api/bookings';
+import { getAssets } from '@/api/assets';
 
 const HOURS = Array.from({ length: 9 }, (_, i) => i + 9); // 9:00–17:00
 
@@ -23,16 +27,21 @@ const HOURS = Array.from({ length: 9 }, (_, i) => i + 9); // 9:00–17:00
 function parseTimeToDecimal(isoString) {
   if (!isoString) return 9;
   if (typeof isoString === 'number') return isoString;
-  if (!isoString.includes(':') && !isoString.includes('T')) {
-    return parseFloat(isoString) || 9;
+  
+  // Standardize spaces to T to handle both space and T datetime separators
+  const cleanStr = String(isoString).trim().replace(' ', 'T');
+
+  if (!cleanStr.includes(':') && !cleanStr.includes('T')) {
+    return parseFloat(cleanStr) || 9;
   }
-  if (isoString.includes(':') && !isoString.includes('T')) {
-    const [h, m] = isoString.split(':');
+  if (cleanStr.includes(':') && !cleanStr.includes('T')) {
+    const [h, m] = cleanStr.split(':');
     return parseFloat(h) + (parseFloat(m) / 60);
   }
   try {
-    const timePart = isoString.split('T')[1];
-    if (timePart) {
+    const parts = cleanStr.split('T');
+    const timePart = parts[1] || parts[0];
+    if (timePart && timePart.includes(':')) {
       const [h, m] = timePart.split(':');
       return parseFloat(h) + (parseFloat(m) / 60);
     }
@@ -54,18 +63,42 @@ export default function BookingPage() {
   const [bookings, setBookings] = useState([]);
   const [form, setForm] = useState({ startTime: '', endTime: '', purpose: '' });
   const [loading, setLoading] = useState(true);
+  const [assets, setAssets] = useState([]);
+  const [selectedAsset, setSelectedAsset] = useState(null);
 
-  async function loadBookings() {
+  // Load all bookable assets on mount
+  useEffect(() => {
+    async function loadAssets() {
+      try {
+        const list = await getAssets();
+        if (list) {
+          const bookable = list.filter((a) => a.isBookable);
+          setAssets(bookable);
+          if (bookable.length > 0) {
+            setSelectedAsset(bookable[0]);
+          } else {
+            setLoading(false);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load bookable assets:', err);
+        setLoading(false);
+      }
+    }
+    loadAssets();
+  }, []);
+
+  async function loadBookings(assetId) {
+    if (!assetId) return;
     try {
-      // Conference Room B3 has asset ID 2
-      const data = await getAssetBookings(2);
+      setLoading(true);
+      const data = await getAssetBookings(assetId);
       if (data) {
         // Convert backend ISO datetimes to local grid decimal hours
         const mapped = data.map((b) => {
           const startHour = parseTimeToDecimal(b.startTime);
           const endHour = parseTimeToDecimal(b.endTime);
           
-          // Map user details to meeting label if available
           const userName = b.user?.name || b.employee?.name || b.userName || '';
           const titleLabel = b.purpose 
             ? (userName ? `${b.purpose} — ${userName}` : b.purpose)
@@ -88,15 +121,19 @@ export default function BookingPage() {
     }
   }
 
+  // Reload bookings whenever selectedAsset is updated
   useEffect(() => {
-    loadBookings();
-  }, []);
+    if (selectedAsset) {
+      loadBookings(selectedAsset.id);
+    }
+  }, [selectedAsset]);
 
   function getBookingForHour(hour) {
     return bookings.find((b) => hour >= b.start && hour < b.end);
   }
 
   const handleBook = async (e) => {
+    if (!selectedAsset) return;
     e.preventDefault();
     try {
       const todayStr = new Date().toISOString().split('T')[0];
@@ -104,14 +141,13 @@ export default function BookingPage() {
       const endTimeIso = `${todayStr}T${form.endTime}:00`;
 
       await createBooking({
-        resourceId: 2, // Conference Room B3
+        resourceId: selectedAsset.id,
         startTime: startTimeIso,
         endTime: endTimeIso,
         purpose: form.purpose
       });
       
-      // Reload list from backend directly to fetch correct database details
-      await loadBookings();
+      await loadBookings(selectedAsset.id);
       setDialogOpen(false);
       setForm({ startTime: '', endTime: '', purpose: '' });
     } catch (err) {
@@ -123,16 +159,33 @@ export default function BookingPage() {
     <div className="space-y-6">
       <PageHeader title="Resource Booking" description="Book shared assets and meeting rooms." />
 
-      {/* Resource Info */}
+      {/* Resource Selector */}
       <BlurFade delay={0.05} inView>
         <Card>
-          <CardContent className="flex items-center gap-4 py-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10">
+          <CardContent className="flex flex-col sm:flex-row sm:items-center gap-4 py-4">
+            <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 shrink-0">
               <CalendarDays className="size-6 text-primary" />
             </div>
-            <div>
-              <p className="font-semibold text-lg">Conference Room B3</p>
-              <p className="text-sm text-muted-foreground">Tue, 7 Jul</p>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs text-muted-foreground mb-1">Select Bookable Resource</p>
+              <Select
+                value={selectedAsset ? String(selectedAsset.id) : ''}
+                onValueChange={(val) => {
+                  const found = assets.find(a => String(a.id) === val);
+                  if (found) setSelectedAsset(found);
+                }}
+              >
+                <SelectTrigger className="w-full max-w-md font-semibold text-sm h-10">
+                  <SelectValue placeholder="No bookable assets available" />
+                </SelectTrigger>
+                <SelectContent>
+                  {assets.map((a) => (
+                    <SelectItem key={a.id} value={String(a.id)}>
+                      {a.name} ({a.tag || a.assetTag || `AF-${a.id}`}) — {a.location || 'HQ'}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </CardContent>
         </Card>
@@ -162,20 +215,20 @@ export default function BookingPage() {
                   <div
                     className={`flex-1 min-h-[48px] rounded-lg border px-3 py-2 transition-colors ${
                       isConflict
-                        ? 'bg-destructive/10 border-destructive/30'
+                        ? 'bg-destructive/10 border-destructive/30 border-l-4 border-l-destructive'
                         : isBooked
-                          ? 'bg-primary/10 border-primary/30'
+                          ? 'bg-blue-500/10 border-blue-500/20 border-l-4 border-l-blue-500'
                           : 'border-border/50 hover:bg-accent/50 cursor-pointer'
                     }`}
                     onClick={() => !booking && setDialogOpen(true)}
                   >
-                    {isStart && (
+                    {booking && (
                       <div className="flex items-center gap-2">
                         {isConflict && <AlertTriangle className="size-3.5 text-destructive" />}
-                        <span className={`text-sm font-medium ${isConflict ? 'text-destructive' : 'text-primary'}`}>
-                          {booking.title}
+                        <span className={`text-sm font-semibold ${isConflict ? 'text-destructive' : 'text-blue-600 dark:text-blue-400'}`}>
+                          {booking.title} {!isStart && <span className="text-xs font-normal text-muted-foreground/60">(Cont.)</span>}
                         </span>
-                        <span className="text-xs text-muted-foreground ml-auto">
+                        <span className="text-xs text-muted-foreground ml-auto font-mono">
                           {formatDecimalTime(booking.start)} — {formatDecimalTime(booking.end)}
                         </span>
                       </div>

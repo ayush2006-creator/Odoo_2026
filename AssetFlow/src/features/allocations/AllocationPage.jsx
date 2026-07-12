@@ -57,6 +57,10 @@ export default function AllocationPage() {
     loadData();
   }, [assetTag]);
 
+  const currentHolderName = asset.currentHolderType === 'Employee' && asset.currentHolderId
+    ? (employees.find(e => String(e.id) === String(asset.currentHolderId))?.name || `Employee #${asset.currentHolderId}`)
+    : 'None';
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!toEmployee) return;
@@ -66,8 +70,8 @@ export default function AllocationPage() {
     try {
       await createTransfer({
         assetId: asset.id,
-        fromHolderId: asset.currentHolderId || 'e-1', // Default Priya Shah id
-        toHolderId: toEmployee,
+        fromHolderId: asset.currentHolderId || 1, 
+        toHolderId: parseInt(toEmployee, 10),
         reason
       });
       setSuccessMsg('Transfer request submitted successfully!');
@@ -101,7 +105,7 @@ export default function AllocationPage() {
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Asset</p>
-              <p className="font-semibold text-lg">{asset.tag} — {asset.name}</p>
+              <p className="font-semibold text-lg">{asset.tag || asset.assetTag} — {asset.name}</p>
             </div>
             <div className="ml-auto">
               <StatusBadge status={asset.status} />
@@ -117,7 +121,7 @@ export default function AllocationPage() {
             <AlertTriangle className="size-4" />
             <AlertTitle>Already Allocated</AlertTitle>
             <AlertDescription>
-              Currently allocated to <span className="font-semibold">{asset.currentHolder || 'Priya Shah'}</span>.
+              Currently allocated to <span className="font-semibold">{currentHolderName}</span>.
               Asset must be returned or submit a transfer request below.
             </AlertDescription>
           </Alert>
@@ -138,7 +142,7 @@ export default function AllocationPage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>From</Label>
-                  <Input value={asset.currentHolder || 'Priya Shah'} readOnly className="bg-muted" />
+                  <Input value={currentHolderName} readOnly className="bg-muted" />
                 </div>
                 <div className="space-y-2">
                   <Label>To</Label>
@@ -148,7 +152,7 @@ export default function AllocationPage() {
                     </SelectTrigger>
                     <SelectContent>
                       {employees.map((e) => (
-                        <SelectItem key={e.id} value={e.id}>{e.name} ({e.department})</SelectItem>
+                        <SelectItem key={e.id} value={String(e.id)}>{e.name}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -190,10 +194,12 @@ export default function AllocationPage() {
                 >
                   <div className="absolute -left-[5px] top-4 h-2 w-2 rounded-full bg-primary" />
                   <div className="flex-1">
-                    <p className="text-sm font-medium">{item.action}</p>
-                    <p className="text-xs text-muted-foreground">{item.dept}</p>
+                    <p className="text-sm font-medium">{item.action || item.notes || 'Asset Transfer'}</p>
+                    <p className="text-xs text-muted-foreground">{item.dept || item.details || ''}</p>
                   </div>
-                  <span className="text-xs text-muted-foreground whitespace-nowrap">{item.date}</span>
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">
+                    {item.date || (item.createdAt ? new Date(item.createdAt).toLocaleDateString() : '')}
+                  </span>
                 </div>
               ))}
               {history.length === 0 && (

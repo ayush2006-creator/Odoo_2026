@@ -2,7 +2,7 @@
  * MaintenancePage — Screen 7: Kanban board with drag-and-drop.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   DndContext, closestCorners, PointerSensor, useSensor, useSensors, DragOverlay,
 } from '@dnd-kit/core';
@@ -13,6 +13,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { BlurFade } from '@/components/ui/blur-fade';
 import { PageHeader } from '@/components/shared/PageHeader';
+import {
+  getMaintenanceRequests,
+  approveMaintenanceRequest,
+  assignTechnician,
+  startMaintenance,
+  resolveMaintenance,
+} from '@/api/maintenance';
 
 const PRIORITY_COLORS = {
   High: 'bg-red-500/15 text-red-600 border-red-500/30',
@@ -29,26 +36,6 @@ const COLUMN_COLORS = {
   resolved: 'border-t-emerald-500',
 };
 
-const INITIAL_DATA = {
-  pending: [
-    { id: 'mc-1', tag: 'AF-0063', name: 'Projector', desc: 'Bulb replacement', priority: 'High' },
-    { id: 'mc-2', tag: 'AF-0098', name: 'UPS', desc: 'Battery replacement', priority: 'Medium' },
-  ],
-  approved: [
-    { id: 'mc-3', tag: 'AF-0076', name: 'Laptop', desc: 'Screen damage', priority: 'High' },
-  ],
-  assigned: [
-    { id: 'mc-4', tag: 'AF-0112', name: 'AC Unit', desc: 'Cooling issue', priority: 'Medium' },
-  ],
-  inProgress: [
-    { id: 'mc-5', tag: 'AF-0042', name: 'Printer', desc: 'Paper jam fix', priority: 'Low' },
-  ],
-  resolved: [
-    { id: 'mc-6', tag: 'AF-0033', name: 'Monitor', desc: 'Cable replaced', priority: 'Low' },
-    { id: 'mc-7', tag: 'AF-015', name: 'Chair', desc: 'Wheel repair', priority: 'Medium' },
-  ],
-};
-
 const COLUMN_LABELS = {
   pending: 'Pending',
   approved: 'Approved',
@@ -56,6 +43,17 @@ const COLUMN_LABELS = {
   inProgress: 'In Progress',
   resolved: 'Resolved',
 };
+
+function mapStatusToColKey(status) {
+  if (!status) return 'pending';
+  const clean = status.toLowerCase().replace(/[\s_-]/g, '');
+  if (clean.includes('pending')) return 'pending';
+  if (clean.includes('approve')) return 'approved';
+  if (clean.includes('assign') || clean.includes('technician')) return 'assigned';
+  if (clean.includes('progress')) return 'inProgress';
+  if (clean.includes('resolve')) return 'resolved';
+  return 'pending';
+}
 
 function SortableCard({ item }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -100,8 +98,49 @@ function MaintenanceCard({ item, dragListeners }) {
 }
 
 export default function MaintenancePage() {
-  const [columns, setColumns] = useState(INITIAL_DATA);
+  const [columns, setColumns] = useState({
+    pending: [],
+    approved: [],
+    assigned: [],
+    inProgress: [],
+    resolved: [],
+  });
   const [activeId, setActiveId] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const loadTickets = useCallback(async () => {
+    try {
+      const tickets = await getMaintenanceRequests();
+      if (tickets) {
+        const newCols = {
+          pending: [],
+          approved: [],
+          assigned: [],
+          inProgress: [],
+          resolved: [],
+        };
+        tickets.forEach((t) => {
+          const colKey = mapStatusToColKey(t.status);
+          newCols[colKey].push({
+            id: t.id,
+            tag: t.asset?.assetTag || t.asset?.tag || `AF-${t.assetId}`,
+            name: t.asset?.name || `Asset #${t.assetId}`,
+            desc: t.issueDescription || '',
+            priority: t.priority || 'Medium',
+          });
+        });
+        setColumns(newCols);
+      }
+    } catch (err) {
+      console.error('Failed to load maintenance tickets:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadTickets();
+  }, [loadTickets]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -126,30 +165,46 @@ export default function MaintenancePage() {
     setActiveId(event.active.id);
   };
 
-  const handleDragEnd = (event) => {
+  const handleDragEnd = async (event) => {
     const { active, over } = event;
     setActiveId(null);
     if (!over) return;
 
     const sourceCol = findColumn(active.id);
-    // Determine target column: could be dropping on a card or on the column container
     let targetCol = findColumn(over.id);
     if (!targetCol) {
-      // Dropped on a column droppable id
       targetCol = over.id;
     }
 
     if (!sourceCol || !targetCol || sourceCol === targetCol) return;
 
-    setColumns((prev) => {
-      const item = prev[sourceCol].find((i) => i.id === active.id);
-      if (!item) return prev;
-      return {
-        ...prev,
-        [sourceCol]: prev[sourceCol].filter((i) => i.id !== active.id),
-        [targetCol]: [...prev[targetCol], item],
-      };
-    });
+    const ticketId = active.id;
+    try {
+      if (targetCol === 'approved') {
+        await approveMaintenanceRequest(ticketId);
+      } else if (targetCol === 'assigned') {
+        // Safe default: assign technician ID 1
+        await assignTechnician(ticketId, { technicianId: 1 });
+      } else if (targetCol === 'inProgress') {
+        await startMaintenance(ticketId);
+      } else if (targetCol === 'resolved') {
+        await resolveMaintenance(ticketId, { resolutionNotes: 'Resolved via board drag' });
+      }
+
+      setColumns((prev) => {
+        const item = prev[sourceCol].find((i) => i.id === active.id);
+        if (!item) return prev;
+        return {
+          ...prev,
+          [sourceCol]: prev[sourceCol].filter((i) => i.id !== active.id),
+          [targetCol]: [...prev[targetCol], item],
+        };
+      });
+    } catch (err) {
+      console.error('Failed to transition ticket:', err);
+      // Revert board to database state on failure (e.g. role validation block)
+      await loadTickets();
+    }
   };
 
   const activeItem = activeId ? findItem(activeId) : null;
