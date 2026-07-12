@@ -34,10 +34,18 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { StatusBadge } from '@/components/shared/StatusBadge';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { usePermissions } from '@/hooks/usePermissions';
 import { ACTIONS } from '@/lib/permissions';
 
-import { getDepartments } from '@/api/departments';
+import { getDepartments, createDepartment, updateDepartment, deleteDepartment } from '@/api/departments';
+import { getEmployees } from '@/api/employees';
 
 // ---------------------------------------------------------------------------
 // Component
@@ -46,31 +54,41 @@ import { getDepartments } from '@/api/departments';
 export function DepartmentsTab({ addDialogOpen, onAddDialogClose }) {
   const { can } = usePermissions();
   const [departments, setDepartments] = useState([]);
+  const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingDept, setEditingDept] = useState(null);
-  const [form, setForm] = useState({ name: '', parentDept: '', head: '' });
+  const [form, setForm] = useState({ name: '', parentDeptId: '', headId: '' });
 
-  // Fetch departments on mount
+  // Fetch departments and employees on mount
   useEffect(() => {
-    async function loadDepts() {
+    async function loadData() {
       try {
-        const data = await getDepartments();
-        if (data) setDepartments(data);
+        const depts = await getDepartments();
+        if (depts) {
+          if (Array.isArray(depts)) setDepartments(depts);
+          else if (Array.isArray(depts.data)) setDepartments(depts.data);
+        }
+
+        const emps = await getEmployees();
+        if (emps) {
+          if (Array.isArray(emps)) setEmployees(emps);
+          else if (Array.isArray(emps.data)) setEmployees(emps.data);
+        }
       } catch (err) {
-        console.error('Failed to load departments:', err);
+        console.error('Failed to load departments/employees data:', err);
       } finally {
         setLoading(false);
       }
     }
-    loadDepts();
+    loadData();
   }, [addDialogOpen]);
 
   // Open add dialog when triggered from parent
   useEffect(() => {
     if (addDialogOpen) {
       setEditingDept(null);
-      setForm({ name: '', parentDept: '', head: '' });
+      setForm({ name: '', parentDeptId: '', headId: '' });
       setDialogOpen(true);
     }
   }, [addDialogOpen]);
@@ -86,45 +104,65 @@ export function DepartmentsTab({ addDialogOpen, onAddDialogClose }) {
     setEditingDept(dept);
     setForm({
       name: dept.name,
-      parentDept: dept.parentDept || '',
-      head: dept.head === '—' ? '' : dept.head,
+      parentDeptId: dept.parentDeptId || dept.parentDept || '',
+      headId: dept.headId || dept.head || '',
     });
     setDialogOpen(true);
   };
 
-  const handleDelete = (id) => {
-    setDepartments((prev) => prev.filter((d) => d.id !== id));
+  const handleDelete = async (id) => {
+    try {
+      await deleteDepartment(id);
+      const depts = await getDepartments();
+      if (depts) {
+        if (Array.isArray(depts)) setDepartments(depts);
+        else if (Array.isArray(depts.data)) setDepartments(depts.data);
+      }
+    } catch (err) {
+      console.error('Failed to delete department:', err);
+    }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!form.name.trim()) return;
 
-    if (editingDept) {
-      setDepartments((prev) =>
-        prev.map((d) =>
-          d.id === editingDept.id
-            ? { ...d, name: form.name, parentDept: form.parentDept || null, head: form.head || '—' }
-            : d,
-        ),
-      );
-    } else {
-      const newDept = {
-        id: Date.now(),
-        name: form.name,
-        parentDept: form.parentDept || null,
-        head: form.head || '—',
-        status: 'Active',
-      };
-      setDepartments((prev) => [...prev, newDept]);
-    }
+    const parentIdVal = form.parentDeptId ? parseInt(form.parentDeptId, 10) : null;
+    const headIdVal = form.headId ? parseInt(form.headId, 10) : null;
 
-    setDialogOpen(false);
-    onAddDialogClose?.();
+    try {
+      if (editingDept) {
+        await updateDepartment(editingDept.id, {
+          name: form.name,
+          parentDepartmentId: parentIdVal,
+          departmentHeadId: headIdVal,
+        });
+      } else {
+        await createDepartment({
+          name: form.name,
+          parentDepartmentId: parentIdVal,
+          departmentHeadId: headIdVal,
+        });
+      }
+
+      const depts = await getDepartments();
+      if (depts) {
+        if (Array.isArray(depts)) setDepartments(depts);
+        else if (Array.isArray(depts.data)) setDepartments(depts.data);
+      }
+
+      setDialogOpen(false);
+      onAddDialogClose?.();
+    } catch (err) {
+      console.error('Failed to save department details:', err);
+    }
   };
 
   const canEdit = can(ACTIONS.DEPARTMENT_EDIT);
   const canDelete = can(ACTIONS.DEPARTMENT_DELETE);
   const showActions = canEdit || canDelete;
+
+  const safeDepartments = Array.isArray(departments) ? departments : [];
+  const safeEmployees = Array.isArray(employees) ? employees : [];
 
   return (
     <div className="space-y-4 mt-4">
@@ -140,48 +178,57 @@ export function DepartmentsTab({ addDialogOpen, onAddDialogClose }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {departments.map((dept) => (
-              <TableRow key={dept.id}>
-                <TableCell className="font-medium">{dept.name}</TableCell>
-                <TableCell className="text-muted-foreground">
-                  {dept.parentDept || '—'}
-                </TableCell>
-                <TableCell>{dept.head}</TableCell>
-                <TableCell>
-                  <StatusBadge status={dept.status} />
-                </TableCell>
-                {showActions && (
+            {safeDepartments.map((dept) => {
+              const parentId = dept.parentDeptId || dept.parentDept;
+              const parentDeptName = parentId
+                ? (safeDepartments.find(d => String(d.id) === String(parentId))?.name || `Dept #${parentId}`)
+                : '—';
+              const headId = dept.headId || dept.head;
+              const headName = headId
+                ? (safeEmployees.find(e => String(e.id) === String(headId))?.name || `Employee #${headId}`)
+                : '—';
+
+              return (
+                <TableRow key={dept.id}>
+                  <TableCell className="font-medium">{dept.name}</TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {parentDeptName}
+                  </TableCell>
+                  <TableCell>{headName}</TableCell>
                   <TableCell>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                    <StatusBadge status={dept.status} />
+                  </TableCell>
+                  {showActions && (
+                    <TableCell>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger className="h-8 w-8 flex items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer">
                           <MoreHorizontal className="h-4 w-4" />
                           <span className="sr-only">Actions</span>
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        {canEdit && (
-                          <DropdownMenuItem onClick={() => handleEdit(dept)}>
-                            <Pencil className="mr-2 h-4 w-4" />
-                            Edit
-                          </DropdownMenuItem>
-                        )}
-                        {canDelete && (
-                          <DropdownMenuItem
-                            className="text-destructive focus:text-destructive"
-                            onClick={() => handleDelete(dept.id)}
-                          >
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Delete
-                          </DropdownMenuItem>
-                        )}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
-                )}
-              </TableRow>
-            ))}
-            {departments.length === 0 && (
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          {canEdit && (
+                            <DropdownMenuItem onClick={() => handleEdit(dept)}>
+                              <Pencil className="mr-2 h-4 w-4" />
+                              Edit
+                            </DropdownMenuItem>
+                          )}
+                          {canDelete && (
+                            <DropdownMenuItem
+                              className="text-destructive focus:text-destructive"
+                              onClick={() => handleDelete(dept.id)}
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Delete
+                            </DropdownMenuItem>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  )}
+                </TableRow>
+              );
+            })}
+            {safeDepartments.length === 0 && (
               <TableRow>
                 <TableCell colSpan={showActions ? 5 : 4} className="h-24 text-center text-muted-foreground">
                   No departments found.
@@ -222,23 +269,49 @@ export function DepartmentsTab({ addDialogOpen, onAddDialogClose }) {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="dept-parent">Parent Department</Label>
-              <Input
-                id="dept-parent"
-                placeholder="e.g. Engineering (optional)"
-                value={form.parentDept}
-                onChange={(e) => setForm((f) => ({ ...f, parentDept: e.target.value }))}
-              />
+              <Label>Parent Department</Label>
+              <Select
+                value={form.parentDeptId ? String(form.parentDeptId) : 'none'}
+                onValueChange={(val) => setForm(f => ({ ...f, parentDeptId: val === 'none' ? '' : val }))}
+              >
+                <SelectTrigger>
+                  <SelectValue>
+                    {form.parentDeptId ? (safeDepartments.find(d => String(d.id) === String(form.parentDeptId))?.name || 'None') : 'None'}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  {safeDepartments
+                    .filter((d) => !editingDept || d.id !== editingDept.id) // Cannot be parent of itself
+                    .map((d) => (
+                      <SelectItem key={d.id} value={String(d.id)}>
+                        {`${d.name}`}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="dept-head">Department Head</Label>
-              <Input
-                id="dept-head"
-                placeholder="e.g. Priya Shah (optional)"
-                value={form.head}
-                onChange={(e) => setForm((f) => ({ ...f, head: e.target.value }))}
-              />
+              <Label>Department Head</Label>
+              <Select
+                value={form.headId ? String(form.headId) : 'none'}
+                onValueChange={(val) => setForm(f => ({ ...f, headId: val === 'none' ? '' : val }))}
+              >
+                <SelectTrigger>
+                  <SelectValue>
+                    {form.headId ? (safeEmployees.find(e => String(e.id) === String(form.headId))?.name || 'None') : 'None'}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  {safeEmployees.map((e) => (
+                    <SelectItem key={e.id} value={String(e.id)}>
+                      {`${e.name}`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
 

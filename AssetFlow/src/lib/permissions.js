@@ -192,7 +192,15 @@ const PERMISSION_MAP = {
  * @returns {boolean}
  */
 export function can(role, action) {
-  const allowed = PERMISSION_MAP[role];
+  if (!role) return false;
+  let cleanRole = role;
+  const lower = role.toLowerCase().replace(/_/g, '');
+  if (lower === 'admin') cleanRole = ROLES.ADMIN;
+  else if (lower === 'assetmanager') cleanRole = ROLES.ASSET_MANAGER;
+  else if (lower === 'departmenthead') cleanRole = ROLES.DEPARTMENT_HEAD;
+  else if (lower === 'employee') cleanRole = ROLES.EMPLOYEE;
+
+  const allowed = PERMISSION_MAP[cleanRole];
   return allowed ? allowed.has(action) : false;
 }
 
@@ -204,7 +212,23 @@ export function can(role, action) {
  * @returns {boolean}
  */
 export function hasMinRole(userRole, requiredRole) {
-  return (ROLE_HIERARCHY[userRole] ?? -1) >= (ROLE_HIERARCHY[requiredRole] ?? Infinity);
+  if (!userRole) return false;
+  
+  let cleanUserRole = userRole;
+  const userLower = userRole.toLowerCase().replace(/_/g, '');
+  if (userLower === 'admin') cleanUserRole = ROLES.ADMIN;
+  else if (userLower === 'assetmanager') cleanUserRole = ROLES.ASSET_MANAGER;
+  else if (userLower === 'departmenthead') cleanUserRole = ROLES.DEPARTMENT_HEAD;
+  else if (userLower === 'employee') cleanUserRole = ROLES.EMPLOYEE;
+
+  let cleanReqRole = requiredRole;
+  const reqLower = requiredRole.toLowerCase().replace(/_/g, '');
+  if (reqLower === 'admin') cleanReqRole = ROLES.ADMIN;
+  else if (reqLower === 'assetmanager') cleanReqRole = ROLES.ASSET_MANAGER;
+  else if (reqLower === 'departmenthead') cleanReqRole = ROLES.DEPARTMENT_HEAD;
+  else if (reqLower === 'employee') cleanReqRole = ROLES.EMPLOYEE;
+
+  return (ROLE_HIERARCHY[cleanUserRole] ?? -1) >= (ROLE_HIERARCHY[cleanReqRole] ?? Infinity);
 }
 
 /**
@@ -213,6 +237,14 @@ export function hasMinRole(userRole, requiredRole) {
  * @returns {string[]}
  */
 export function getAllowedActions(role) {
-  const allowed = PERMISSION_MAP[role];
+  if (!role) return [];
+  let cleanRole = role;
+  const lower = role.toLowerCase().replace(/_/g, '');
+  if (lower === 'admin') cleanRole = ROLES.ADMIN;
+  else if (lower === 'assetmanager') cleanRole = ROLES.ASSET_MANAGER;
+  else if (lower === 'departmenthead') cleanRole = ROLES.DEPARTMENT_HEAD;
+  else if (lower === 'employee') cleanRole = ROLES.EMPLOYEE;
+
+  const allowed = PERMISSION_MAP[cleanRole];
   return allowed ? [...allowed] : [];
 }

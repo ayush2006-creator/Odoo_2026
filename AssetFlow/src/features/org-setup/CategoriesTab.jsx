@@ -37,7 +37,7 @@ import { StatusBadge } from '@/components/shared/StatusBadge';
 import { usePermissions } from '@/hooks/usePermissions';
 import { ACTIONS } from '@/lib/permissions';
 
-import { getAssetCategories } from '@/api/assetCategories';
+import { getAssetCategories, createAssetCategory, updateAssetCategory, deleteAssetCategory } from '@/api/assetCategories';
 
 // ---------------------------------------------------------------------------
 // Component
@@ -56,7 +56,10 @@ export function CategoriesTab({ addDialogOpen, onAddDialogClose }) {
     async function loadCats() {
       try {
         const data = await getAssetCategories();
-        if (data) setCategories(data);
+        if (data) {
+          if (Array.isArray(data)) setCategories(data);
+          else if (Array.isArray(data.data)) setCategories(data.data);
+        }
       } catch (err) {
         console.error('Failed to load categories:', err);
       } finally {
@@ -82,42 +85,92 @@ export function CategoriesTab({ addDialogOpen, onAddDialogClose }) {
     }
   };
 
+  const formatCustomFields = (fields) => {
+    if (!fields) return '—';
+    if (typeof fields === 'string') return fields === '—' ? '—' : fields;
+    if (typeof fields === 'object') {
+      const keys = Object.keys(fields);
+      if (keys.length === 0) return '—';
+      return keys.map(k => `${k} (${fields[k]})`).join(', ');
+    }
+    return '—';
+  };
+
+  const getCustomFieldsEditLabel = (fields) => {
+    if (!fields) return '';
+    if (typeof fields === 'string') return fields === '—' ? '' : fields;
+    return JSON.stringify(fields);
+  };
+
   const handleEdit = (cat) => {
     setEditingCat(cat);
     setForm({
       name: cat.name,
-      customFields: cat.customFields === '—' ? '' : cat.customFields,
+      customFields: getCustomFieldsEditLabel(cat.customFields || cat.customFields),
     });
     setDialogOpen(true);
   };
 
-  const handleDelete = (id) => {
-    setCategories((prev) => prev.filter((c) => c.id !== id));
+  const handleDelete = async (id) => {
+    try {
+      await deleteAssetCategory(id);
+      const data = await getAssetCategories();
+      if (data) {
+        if (Array.isArray(data)) setCategories(data);
+        else if (Array.isArray(data.data)) setCategories(data.data);
+      }
+    } catch (err) {
+      console.error('Failed to delete category:', err);
+    }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!form.name.trim()) return;
 
-    if (editingCat) {
-      setCategories((prev) =>
-        prev.map((c) =>
-          c.id === editingCat.id
-            ? { ...c, name: form.name, customFields: form.customFields || '—' }
-            : c,
-        ),
-      );
-    } else {
-      const newCat = {
-        id: Date.now(),
-        name: form.name,
-        customFields: form.customFields || '—',
-        status: 'Active',
-      };
-      setCategories((prev) => [...prev, newCat]);
+    // Parse custom fields: they can enter comma-separated list of fields (which we format as object with "string" type)
+    // or enter a valid JSON string.
+    let customFieldsObj = {};
+    if (form.customFields.trim()) {
+      try {
+        if (form.customFields.trim().startsWith('{')) {
+          customFieldsObj = JSON.parse(form.customFields);
+        } else {
+          // e.g. "warranty_months, processor" -> {"warranty_months": "string", "processor": "string"}
+          form.customFields.split(',').forEach((field) => {
+            const name = field.trim();
+            if (name) customFieldsObj[name] = 'string';
+          });
+        }
+      } catch (err) {
+        console.warn('Failed to parse custom fields JSON, using raw fallback:', err);
+        customFieldsObj = { [form.customFields.trim()]: 'string' };
+      }
     }
 
-    setDialogOpen(false);
-    onAddDialogClose?.();
+    try {
+      if (editingCat) {
+        await updateAssetCategory(editingCat.id, {
+          name: form.name,
+          customFields: customFieldsObj,
+        });
+      } else {
+        await createAssetCategory({
+          name: form.name,
+          customFields: customFieldsObj,
+        });
+      }
+
+      const data = await getAssetCategories();
+      if (data) {
+        if (Array.isArray(data)) setCategories(data);
+        else if (Array.isArray(data.data)) setCategories(data.data);
+      }
+
+      setDialogOpen(false);
+      onAddDialogClose?.();
+    } catch (err) {
+      console.error('Failed to save category:', err);
+    }
   };
 
   const canEdit = can(ACTIONS.CATEGORY_EDIT);
@@ -137,21 +190,19 @@ export function CategoriesTab({ addDialogOpen, onAddDialogClose }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {categories.map((cat) => (
+            {(Array.isArray(categories) ? categories : []).map((cat) => (
               <TableRow key={cat.id}>
                 <TableCell className="font-medium">{cat.name}</TableCell>
-                <TableCell className="text-muted-foreground">{cat.customFields}</TableCell>
+                <TableCell className="text-muted-foreground">{formatCustomFields(cat.customFields || cat.customFields)}</TableCell>
                 <TableCell>
                   <StatusBadge status={cat.status} />
                 </TableCell>
                 {showActions && (
                   <TableCell>
                     <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon" className="h-8 w-8">
-                          <MoreHorizontal className="h-4 w-4" />
-                          <span className="sr-only">Actions</span>
-                        </Button>
+                      <DropdownMenuTrigger className="h-8 w-8 flex items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer">
+                        <MoreHorizontal className="h-4 w-4" />
+                        <span className="sr-only">Actions</span>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         {canEdit && (
@@ -175,7 +226,7 @@ export function CategoriesTab({ addDialogOpen, onAddDialogClose }) {
                 )}
               </TableRow>
             ))}
-            {categories.length === 0 && (
+            {(Array.isArray(categories) ? categories : []).length === 0 && (
               <TableRow>
                 <TableCell colSpan={showActions ? 4 : 3} className="h-24 text-center text-muted-foreground">
                   No categories found.

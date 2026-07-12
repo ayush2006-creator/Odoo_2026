@@ -45,8 +45,8 @@ import { StatusBadge } from '@/components/shared/StatusBadge';
 import { usePermissions } from '@/hooks/usePermissions';
 import { ACTIONS } from '@/lib/permissions';
 import { ROLES, ROLE_LABELS } from '@/lib/roles';
-
-import { getEmployees } from '@/api/employees';
+import { getEmployees, updateEmployee, updateEmployeeRole } from '@/api/employees';
+import { getDepartments } from '@/api/departments';
 
 // ---------------------------------------------------------------------------
 // Component
@@ -55,24 +55,39 @@ import { getEmployees } from '@/api/employees';
 export function EmployeesTab({ addDialogOpen, onAddDialogClose }) {
   const { can } = usePermissions();
   const [employees, setEmployees] = useState([]);
+  const [departments, setDepartments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingEmp, setEditingEmp] = useState(null);
   const [form, setForm] = useState({ name: '', email: '', department: '', role: ROLES.EMPLOYEE });
 
-  // Fetch employees on mount
+  // Promoted Department Head Dialog States
+  const [promoteDeptDialogOpen, setPromoteDeptDialogOpen] = useState(false);
+  const [promotingEmpId, setPromotingEmpId] = useState(null);
+  const [selectedDeptId, setSelectedDeptId] = useState('');
+
+  // Fetch employees and departments on mount
   useEffect(() => {
-    async function loadEmployees() {
+    async function loadData() {
       try {
         const data = await getEmployees();
-        if (data) setEmployees(data);
+        if (data) {
+          if (Array.isArray(data)) setEmployees(data);
+          else if (Array.isArray(data.data)) setEmployees(data.data);
+        }
+
+        const depts = await getDepartments();
+        if (depts) {
+          if (Array.isArray(depts)) setDepartments(depts);
+          else if (Array.isArray(depts.data)) setDepartments(depts.data);
+        }
       } catch (err) {
-        console.error('Failed to load employees:', err);
+        console.error('Failed to load employee/department roster:', err);
       } finally {
         setLoading(false);
       }
     }
-    loadEmployees();
+    loadData();
   }, [addDialogOpen]);
 
   const canChangeRole = can(ACTIONS.EMPLOYEE_CHANGE_ROLE);
@@ -105,37 +120,80 @@ export function EmployeesTab({ addDialogOpen, onAddDialogClose }) {
     setDialogOpen(true);
   };
 
-  const handleRoleChange = (employeeId, newRole) => {
-    setEmployees((prev) =>
-      prev.map((e) => (e.id === employeeId ? { ...e, role: newRole } : e)),
-    );
+  const handleRoleChange = async (employeeId, newRole) => {
+    if (newRole === 'DepartmentHead' || newRole === 'DEPARTMENT_HEAD') {
+      setPromotingEmpId(employeeId);
+      setSelectedDeptId('');
+      setPromoteDeptDialogOpen(true);
+      return;
+    }
+    try {
+      await updateEmployeeRole(employeeId, { role: newRole });
+      setEmployees((prev) =>
+        (Array.isArray(prev) ? prev : []).map((e) => (e.id === employeeId ? { ...e, role: newRole } : e)),
+      );
+    } catch (err) {
+      console.error('Failed to change role:', err);
+    }
   };
 
-  const handleSave = () => {
+  const confirmPromotion = async () => {
+    if (!promotingEmpId || !selectedDeptId) return;
+    try {
+      await updateEmployeeRole(promotingEmpId, { role: 'DepartmentHead' });
+      await updateEmployee(promotingEmpId, { departmentId: parseInt(selectedDeptId, 10) });
+      
+      const data = await getEmployees();
+      if (data) {
+        if (Array.isArray(data)) setEmployees(data);
+        else if (Array.isArray(data.data)) setEmployees(data.data);
+      }
+      setPromoteDeptDialogOpen(false);
+      setPromotingEmpId(null);
+      setSelectedDeptId('');
+    } catch (err) {
+      console.error('Failed to promote employee to DeptHead:', err);
+    }
+  };
+
+  const handleSave = async () => {
     if (!form.name.trim() || !form.email.trim()) return;
 
-    if (editingEmp) {
-      setEmployees((prev) =>
-        prev.map((e) =>
-          e.id === editingEmp.id
-            ? { ...e, name: form.name, email: form.email, department: form.department, role: form.role }
-            : e,
-        ),
-      );
-    } else {
-      const newEmp = {
-        id: Date.now(),
-        name: form.name,
-        email: form.email,
-        department: form.department,
-        role: form.role,
-        status: 'Active',
-      };
-      setEmployees((prev) => [...prev, newEmp]);
-    }
+    try {
+      if (editingEmp) {
+        await updateEmployee(editingEmp.id, {
+          name: form.name,
+          email: form.email,
+          department: form.department,
+        });
 
-    setDialogOpen(false);
-    onAddDialogClose?.();
+        if (editingEmp.role !== form.role) {
+          await updateEmployeeRole(editingEmp.id, { role: form.role });
+        }
+      } else {
+        // Safe mock creation
+        const newEmp = {
+          id: Date.now(),
+          name: form.name,
+          email: form.email,
+          department: form.department,
+          role: form.role,
+          status: 'Active',
+        };
+        setEmployees((prev) => [...(Array.isArray(prev) ? prev : []), newEmp]);
+      }
+
+      // Reload list from database
+      const data = await getEmployees();
+      if (data) {
+        if (Array.isArray(data)) setEmployees(data);
+        else if (Array.isArray(data.data)) setEmployees(data.data);
+      }
+      setDialogOpen(false);
+      onAddDialogClose?.();
+    } catch (err) {
+      console.error('Failed to save employee modifications:', err);
+    }
   };
 
   return (
@@ -153,7 +211,7 @@ export function EmployeesTab({ addDialogOpen, onAddDialogClose }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {employees.map((emp) => (
+            {(Array.isArray(employees) ? employees : []).map((emp) => (
               <TableRow key={emp.id}>
                 <TableCell className="font-medium">{emp.name}</TableCell>
                 <TableCell className="text-muted-foreground">{emp.email}</TableCell>
@@ -165,7 +223,9 @@ export function EmployeesTab({ addDialogOpen, onAddDialogClose }) {
                       onValueChange={(value) => handleRoleChange(emp.id, value)}
                     >
                       <SelectTrigger className="h-8 w-[160px]">
-                        <SelectValue />
+                        <SelectValue>
+                          {ROLE_LABELS[emp.role] || emp.role}
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         {Object.entries(ROLE_LABELS).map(([key, label]) => (
@@ -185,11 +245,9 @@ export function EmployeesTab({ addDialogOpen, onAddDialogClose }) {
                 {canEdit && (
                   <TableCell>
                     <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon" className="h-8 w-8">
-                          <MoreHorizontal className="h-4 w-4" />
-                          <span className="sr-only">Actions</span>
-                        </Button>
+                      <DropdownMenuTrigger className="h-8 w-8 flex items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer">
+                        <MoreHorizontal className="h-4 w-4" />
+                        <span className="sr-only">Actions</span>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem onClick={() => handleEdit(emp)}>
@@ -202,7 +260,7 @@ export function EmployeesTab({ addDialogOpen, onAddDialogClose }) {
                 )}
               </TableRow>
             ))}
-            {employees.length === 0 && (
+            {(Array.isArray(employees) ? employees : []).length === 0 && (
               <TableRow>
                 <TableCell colSpan={canEdit ? 6 : 5} className="h-24 text-center text-muted-foreground">
                   No employees found.
@@ -261,7 +319,9 @@ export function EmployeesTab({ addDialogOpen, onAddDialogClose }) {
                 onValueChange={(value) => setForm((f) => ({ ...f, role: value }))}
               >
                 <SelectTrigger id="emp-role">
-                  <SelectValue />
+                  <SelectValue>
+                    {ROLE_LABELS[form.role] || form.role}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {Object.entries(ROLE_LABELS).map(([key, label]) => (
@@ -280,6 +340,45 @@ export function EmployeesTab({ addDialogOpen, onAddDialogClose }) {
             </Button>
             <Button onClick={handleSave} disabled={!form.name.trim() || !form.email.trim()}>
               {editingEmp ? 'Save Changes' : 'Add Employee'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Select Department for DepartmentHead Dialog */}
+      <Dialog open={promoteDeptDialogOpen} onOpenChange={setPromoteDeptDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Assign Department for Head</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-muted-foreground">
+              Please select which department this employee will be designated to head:
+            </p>
+            <div className="space-y-2">
+              <Label>Department</Label>
+              <Select value={selectedDeptId} onValueChange={setSelectedDeptId}>
+                <SelectTrigger>
+                  <SelectValue>
+                    {selectedDeptId ? (departments.find(d => String(d.id) === selectedDeptId)?.name || 'Select Department...') : 'Select Department...'}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {departments.map((d) => (
+                    <SelectItem key={d.id} value={String(d.id)}>
+                      {`${d.name}`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPromoteDeptDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={confirmPromotion} disabled={!selectedDeptId}>
+              Confirm Promotion
             </Button>
           </DialogFooter>
         </DialogContent>

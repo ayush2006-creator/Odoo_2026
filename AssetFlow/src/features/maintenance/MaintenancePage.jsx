@@ -13,6 +13,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { BlurFade } from '@/components/ui/blur-fade';
 import { PageHeader } from '@/components/shared/PageHeader';
+import { usePermissions } from '@/hooks/usePermissions';
+import { ACTIONS } from '@/lib/permissions';
+import { getEmployees } from '@/api/employees';
 import {
   getMaintenanceRequests,
   approveMaintenanceRequest,
@@ -55,9 +58,10 @@ function mapStatusToColKey(status) {
   return 'pending';
 }
 
-function SortableCard({ item }) {
+function SortableCard({ item, hasTransitionPerm }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: item.id,
+    disabled: !hasTransitionPerm,
   });
 
   const style = {
@@ -67,20 +71,28 @@ function SortableCard({ item }) {
   };
 
   return (
-    <div ref={setNodeRef} style={style} {...attributes}>
-      <MaintenanceCard item={item} dragListeners={listeners} />
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...(hasTransitionPerm ? listeners : {})}
+      className={hasTransitionPerm ? "cursor-grab active:cursor-grabbing mb-2" : "cursor-default mb-2"}
+    >
+      <MaintenanceCard item={item} hasTransitionPerm={hasTransitionPerm} />
     </div>
   );
 }
 
-function MaintenanceCard({ item, dragListeners }) {
+function MaintenanceCard({ item, hasTransitionPerm }) {
   return (
-    <Card className="mb-2 hover:shadow-md transition-shadow cursor-default">
+    <Card className="hover:shadow-md transition-shadow">
       <CardContent className="p-3">
         <div className="flex items-start gap-2">
-          <button className="mt-0.5 cursor-grab active:cursor-grabbing text-muted-foreground hover:text-foreground" {...dragListeners}>
-            <GripVertical className="size-4" />
-          </button>
+          {hasTransitionPerm && (
+            <div className="mt-0.5 text-muted-foreground">
+              <GripVertical className="size-4 shrink-0" />
+            </div>
+          )}
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between mb-1">
               <span className="font-mono text-xs font-semibold text-primary">{item.tag}</span>
@@ -98,6 +110,9 @@ function MaintenanceCard({ item, dragListeners }) {
 }
 
 export default function MaintenancePage() {
+  const { can } = usePermissions();
+  const hasTransitionPerm = can(ACTIONS.MAINTENANCE_APPROVE) || can(ACTIONS.MAINTENANCE_ASSIGN_TECH) || can(ACTIONS.MAINTENANCE_START) || can(ACTIONS.MAINTENANCE_RESOLVE);
+
   const [columns, setColumns] = useState({
     pending: [],
     approved: [],
@@ -105,6 +120,7 @@ export default function MaintenancePage() {
     inProgress: [],
     resolved: [],
   });
+  const [employees, setEmployees] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -140,6 +156,18 @@ export default function MaintenancePage() {
 
   useEffect(() => {
     loadTickets();
+    async function loadEmps() {
+      try {
+        const emps = await getEmployees();
+        if (emps) {
+          if (Array.isArray(emps)) setEmployees(emps);
+          else if (Array.isArray(emps.data)) setEmployees(emps.data);
+        }
+      } catch (err) {
+        console.warn('Failed to load employees for technician assignment fallback:', err);
+      }
+    }
+    loadEmps();
   }, [loadTickets]);
 
   const sensors = useSensors(
@@ -162,10 +190,12 @@ export default function MaintenancePage() {
   }, [columns]);
 
   const handleDragStart = (event) => {
+    if (!hasTransitionPerm) return;
     setActiveId(event.active.id);
   };
 
   const handleDragEnd = async (event) => {
+    if (!hasTransitionPerm) return;
     const { active, over } = event;
     setActiveId(null);
     if (!over) return;
@@ -183,8 +213,11 @@ export default function MaintenancePage() {
       if (targetCol === 'approved') {
         await approveMaintenanceRequest(ticketId);
       } else if (targetCol === 'assigned') {
-        // Safe default: assign technician ID 1
-        await assignTechnician(ticketId, { technicianId: 1 });
+        const safeEmps = Array.isArray(employees) ? employees : [];
+        // Find a valid technician: try Asset Manager, then Admin, then first employee, otherwise fallback to 1
+        const tech = safeEmps.find(e => e.role?.toLowerCase() === 'assetmanager' || e.role?.toLowerCase() === 'admin') || safeEmps[0];
+        const techId = tech ? tech.id : 1;
+        await assignTechnician(ticketId, { technicianId: techId });
       } else if (targetCol === 'inProgress') {
         await startMaintenance(ticketId);
       } else if (targetCol === 'resolved') {
@@ -213,13 +246,13 @@ export default function MaintenancePage() {
     <div className="space-y-6">
       <PageHeader title="Maintenance" description="Track maintenance requests through the workflow." />
 
-      <BlurFade delay={0.1} inView>
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCorners}
-          onDragStart={handleDragStart}
-          onDragEnd={handleDragEnd}
-        >
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCorners}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+      >
+        <BlurFade delay={0.1} inView>
           <div className="flex gap-4 overflow-x-auto pb-4">
             {Object.entries(COLUMN_LABELS).map(([key, label]) => (
               <div
@@ -239,19 +272,19 @@ export default function MaintenancePage() {
                     id={key}
                   >
                     {columns[key]?.map((item) => (
-                      <SortableCard key={item.id} item={item} />
+                      <SortableCard key={item.id} item={item} hasTransitionPerm={hasTransitionPerm} />
                     ))}
                   </SortableContext>
                 </div>
               </div>
             ))}
           </div>
+        </BlurFade>
 
-          <DragOverlay>
-            {activeItem ? <MaintenanceCard item={activeItem} dragListeners={{}} /> : null}
-          </DragOverlay>
-        </DndContext>
-      </BlurFade>
+        <DragOverlay>
+          {activeItem ? <MaintenanceCard item={activeItem} hasTransitionPerm={hasTransitionPerm} /> : null}
+        </DragOverlay>
+      </DndContext>
 
       <BlurFade delay={0.15} inView>
         <p className="text-xs text-muted-foreground text-center flex items-center justify-center gap-1.5">
