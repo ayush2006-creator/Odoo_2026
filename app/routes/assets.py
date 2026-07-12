@@ -15,6 +15,7 @@ from app.schemas.asset import AssetResponse, AssetCreate, AssetUpdate, AssetTran
 from app.schemas.allocation import AllocationResponse
 from app.schemas.maintenance import MaintenanceResponse
 from app.services.activity_service import log_activity
+from app.services.booking_resolver import resolve_asset_booking_state
 
 router = APIRouter(
     prefix="/assets",
@@ -60,7 +61,10 @@ def list_assets(
             )
         )
         
-    return query.all()
+    assets = query.all()
+    for asset in assets:
+        resolve_asset_booking_state(asset, db)
+    return assets
 
 @router.post("", response_model=AssetResponse)
 def register_asset(
@@ -126,6 +130,7 @@ def get_asset(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Asset not found"
         )
+    resolve_asset_booking_state(asset, db)
     return asset
 
 @router.patch("/{asset_id}", response_model=AssetResponse)

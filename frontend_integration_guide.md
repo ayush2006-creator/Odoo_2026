@@ -375,7 +375,21 @@ For bookable assets (e.g., meeting rooms, shared cars, projectors).
 ## 8. Dashboard & Reports
 
 ### GET `/dashboard/kpis`
-- Returns counters for Available Assets, Allocated Assets, Active Bookings, Maintenance requests today, Pending Transfers, and Upcoming Returns.
+- Returns counters for all assets and active states.
+- **Response (200 OK)**:
+  ```json
+  {
+    "total_assets": 24,
+    "assets_available": 21,
+    "assets_allocated": 1,
+    "assets_under_maintenance": 2,
+    "assets_reserved": 0,
+    "maintenance_today": 3,
+    "active_bookings": 0,
+    "pending_transfers": 2,
+    "upcoming_returns": 0
+  }
+  ```
 
 ### GET `/dashboard/overdue`
 - Returns list of allocations that have exceeded the expected return date.
