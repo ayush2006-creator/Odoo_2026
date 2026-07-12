@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useTheme } from '@/components/layout/ThemeProvider';
 import { useNavigate } from 'react-router';
+import { useEffect, useState } from 'react';
 import { logout } from '@/api/auth';
 import { getStoredUser } from '@/api/client';
 import { ROLE_LABELS } from '@/lib/roles';
@@ -24,7 +25,21 @@ import { ROLE_LABELS } from '@/lib/roles';
 export function Topbar({ title }) {
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
-  const user = getStoredUser();
+  const [user, setUser] = useState(() => getStoredUser());
+
+  useEffect(() => {
+    // Keep user state in sync with localStorage changes
+    const handleAuthChange = () => {
+      setUser(getStoredUser());
+    };
+    window.addEventListener('auth-change', handleAuthChange);
+    window.addEventListener('storage', handleAuthChange);
+
+    return () => {
+      window.removeEventListener('auth-change', handleAuthChange);
+      window.removeEventListener('storage', handleAuthChange);
+    };
+  }, []);
 
   const initials = user?.name
     ? user.name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)

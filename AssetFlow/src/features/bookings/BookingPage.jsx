@@ -15,9 +15,39 @@ import {
 import { ShimmerButton } from '@/components/ui/shimmer-button';
 import { BlurFade } from '@/components/ui/blur-fade';
 import { PageHeader } from '@/components/shared/PageHeader';
-import { getBookings, createBooking } from '@/api/bookings';
+import { getAssetBookings, createBooking } from '@/api/bookings';
 
 const HOURS = Array.from({ length: 9 }, (_, i) => i + 9); // 9:00–17:00
+
+// Timezone-independent ISO string to decimal hour converter
+function parseTimeToDecimal(isoString) {
+  if (!isoString) return 9;
+  if (typeof isoString === 'number') return isoString;
+  if (!isoString.includes(':') && !isoString.includes('T')) {
+    return parseFloat(isoString) || 9;
+  }
+  if (isoString.includes(':') && !isoString.includes('T')) {
+    const [h, m] = isoString.split(':');
+    return parseFloat(h) + (parseFloat(m) / 60);
+  }
+  try {
+    const timePart = isoString.split('T')[1];
+    if (timePart) {
+      const [h, m] = timePart.split(':');
+      return parseFloat(h) + (parseFloat(m) / 60);
+    }
+  } catch (e) {
+    console.error('Time parsing failed:', isoString, e);
+  }
+  return 9;
+}
+
+// Convert decimal hours (e.g. 10.5) to human-readable clock strings (e.g. "10:30")
+function formatDecimalTime(decimal) {
+  const h = Math.floor(decimal);
+  const m = Math.round((decimal - h) * 60);
+  return `${h}:${m < 10 ? '0' + m : m}`;
+}
 
 export default function BookingPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -27,8 +57,30 @@ export default function BookingPage() {
 
   async function loadBookings() {
     try {
-      const data = await getBookings();
-      if (data) setBookings(data);
+      // Conference Room B3 has asset ID 2
+      const data = await getAssetBookings(2);
+      if (data) {
+        // Convert backend ISO datetimes to local grid decimal hours
+        const mapped = data.map((b) => {
+          const startHour = parseTimeToDecimal(b.startTime);
+          const endHour = parseTimeToDecimal(b.endTime);
+          
+          // Map user details to meeting label if available
+          const userName = b.user?.name || b.employee?.name || b.userName || '';
+          const titleLabel = b.purpose 
+            ? (userName ? `${b.purpose} — ${userName}` : b.purpose)
+            : (userName ? `Booked by ${userName}` : 'Booked Slot');
+
+          return {
+            ...b,
+            start: startHour,
+            end: endHour,
+            title: titleLabel,
+            status: b.status || 'booked'
+          };
+        });
+        setBookings(mapped);
+      }
     } catch (err) {
       console.error('Failed to load bookings:', err);
     } finally {
@@ -47,22 +99,19 @@ export default function BookingPage() {
   const handleBook = async (e) => {
     e.preventDefault();
     try {
-      // Parse start and end hours as decimals for simplified calendar UI
-      const startHour = parseFloat(form.startTime.split(':')[0]) + (parseFloat(form.startTime.split(':')[1]) / 60);
-      const endHour = parseFloat(form.endTime.split(':')[0]) + (parseFloat(form.endTime.split(':')[1]) / 60);
-      
+      const todayStr = new Date().toISOString().split('T')[0];
+      const startTimeIso = `${todayStr}T${form.startTime}:00`;
+      const endTimeIso = `${todayStr}T${form.endTime}:00`;
+
       await createBooking({
-        resourceId: 'asset-76',
-        startTime: form.startTime,
-        endTime: form.endTime,
+        resourceId: 2, // Conference Room B3
+        startTime: startTimeIso,
+        endTime: endTimeIso,
         purpose: form.purpose
       });
       
-      // Update calendar view
-      setBookings((prev) => [
-        ...prev,
-        { id: `b-new-${Date.now()}`, start: startHour, end: endHour, title: form.purpose || 'Booking Slot', status: 'booked' }
-      ]);
+      // Reload list from backend directly to fetch correct database details
+      await loadBookings();
       setDialogOpen(false);
       setForm({ startTime: '', endTime: '', purpose: '' });
     } catch (err) {
@@ -102,8 +151,8 @@ export default function BookingPage() {
             {HOURS.map((hour) => {
               const booking = getBookingForHour(hour);
               const isConflict = booking?.status === 'conflict';
-              const isBooked = booking?.status === 'booked';
-              const isStart = booking && hour === Math.floor(booking.start);
+              const isBooked = booking && !isConflict;
+              const isStart = booking && hour === Math.floor(booking.start + 0.05);
 
               return (
                 <div key={hour} className="flex items-stretch gap-3 group">
@@ -127,7 +176,7 @@ export default function BookingPage() {
                           {booking.title}
                         </span>
                         <span className="text-xs text-muted-foreground ml-auto">
-                          {booking.start}:00 — {booking.end % 1 ? `${Math.floor(booking.end)}:30` : `${booking.end}:00`}
+                          {formatDecimalTime(booking.start)} — {formatDecimalTime(booking.end)}
                         </span>
                       </div>
                     )}

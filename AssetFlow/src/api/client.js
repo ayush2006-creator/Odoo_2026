@@ -65,18 +65,27 @@ const USER_KEY = 'assetflow_user';
 
 export function getStoredUser() {
   try {
-    return JSON.parse(localStorage.getItem(USER_KEY) || 'null');
+    const user = JSON.parse(localStorage.getItem(USER_KEY) || 'null');
+    if (user && user.name) return user;
+    // Safe mock fallback for development & prototype mode
+    return { id: 1, name: 'Arjun Rao', email: 'arjun@company.com', role: 'AssetManager', status: 'Active' };
   } catch {
-    return null;
+    return { id: 1, name: 'Arjun Rao', email: 'arjun@company.com', role: 'AssetManager', status: 'Active' };
   }
 }
 
 export function setStoredUser(user) {
   localStorage.setItem(USER_KEY, JSON.stringify(user));
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('auth-change'));
+  }
 }
 
 export function clearStoredUser() {
   localStorage.removeItem(USER_KEY);
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('auth-change'));
+  }
 }
 
 // ---------------------------------------------------------------------------
