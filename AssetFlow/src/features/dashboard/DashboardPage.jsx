@@ -58,9 +58,9 @@ export default function DashboardPage() {
   const navigate = useNavigate();
 
   const [kpis, setKpis] = useState({
-    available: 96,
-    allocated: 34,
-    underMaintenance: 4,
+    assetsAvailable: 96,
+    assetsAllocated: 34,
+    assetsUnderMaintenance: 4,
     activeBookings: 6,
     pendingTransfers: 3,
     upcomingReturns: 12
@@ -90,12 +90,42 @@ export default function DashboardPage() {
   }, []);
 
   const kpiList = [
-    { title: 'Available', value: kpis.available, icon: PackageCheck, color: 'text-emerald-500' },
-    { title: 'Allocated', value: kpis.allocated, icon: PackageMinus, color: 'text-blue-500' },
-    { title: 'Under Maintenance', value: kpis.underMaintenance, icon: Wrench, color: 'text-orange-500' },
-    { title: 'Active Bookings', value: kpis.activeBookings, icon: CalendarDays, color: 'text-primary' },
-    { title: 'Pending Transfers', value: kpis.pendingTransfers, icon: ArrowLeftRight, color: 'text-amber-500' },
-    { title: 'Upcoming Returns', value: kpis.upcomingReturns, icon: CalendarClock, color: 'text-primary' },
+    {
+      title: 'Available',
+      value: kpis.assetsAvailable !== undefined ? kpis.assetsAvailable : 0,
+      icon: PackageCheck,
+      color: 'text-emerald-500',
+    },
+    {
+      title: 'Allocated',
+      value: kpis.assetsAllocated !== undefined ? kpis.assetsAllocated : 0,
+      icon: PackageMinus,
+      color: 'text-blue-500',
+    },
+    {
+      title: 'Under Maintenance',
+      value: kpis.assetsUnderMaintenance !== undefined ? kpis.assetsUnderMaintenance : 0,
+      icon: Wrench,
+      color: 'text-orange-500',
+    },
+    {
+      title: 'Active Bookings',
+      value: kpis.activeBookings !== undefined ? kpis.activeBookings : 0,
+      icon: CalendarDays,
+      color: 'text-primary',
+    },
+    {
+      title: 'Pending Transfers',
+      value: kpis.pendingTransfers !== undefined ? kpis.pendingTransfers : 0,
+      icon: ArrowLeftRight,
+      color: 'text-amber-500',
+    },
+    {
+      title: 'Upcoming Returns',
+      value: kpis.upcomingReturns !== undefined ? kpis.upcomingReturns : 0,
+      icon: CalendarClock,
+      color: 'text-primary',
+    },
   ];
 
   return (
@@ -167,17 +197,18 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
             {activities.map((item, idx) => {
-              // Map icons dynamically
               const Icon = item.category === 'bookings' ? CalendarDays : item.category === 'approvals' ? ArrowRightLeft : Laptop;
+              const msgLabel = item.message || item.msg || item.content || item.text || 'Activity Update';
+              const timeLabel = item.time || (item.createdAt ? new Date(item.createdAt).toLocaleDateString() : '') || 'just now';
               return (
                 <div
                   key={item.id || idx}
                   className="flex items-center gap-3 rounded-lg border border-border/50 bg-muted/30 px-4 py-3 transition-colors hover:bg-muted/60"
                 >
                   <Icon className="size-4 shrink-0 text-muted-foreground" />
-                  <span className="flex-1 text-sm">{item.msg}</span>
+                  <span className="flex-1 text-sm">{msgLabel}</span>
                   <span className="text-xs text-muted-foreground whitespace-nowrap">
-                    {item.time}
+                    {timeLabel}
                   </span>
                 </div>
               );

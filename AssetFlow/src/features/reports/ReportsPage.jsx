@@ -13,6 +13,7 @@ import {
   getUtilizationReport,
   getMaintenanceFrequencyReport,
   getDueForMaintenanceReport,
+  getDeptAllocationSummary,
   exportReport,
   downloadReport,
 } from '@/api/reports';
@@ -39,6 +40,7 @@ function ChartTooltipContent({ active, payload, label }) {
 }
 
 function SummaryCard({ title, icon: Icon, items }) {
+  const safeItems = Array.isArray(items) ? items : [];
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -48,15 +50,22 @@ function SummaryCard({ title, icon: Icon, items }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
-        {items.map((item) => (
-          <div key={item.tag} className="flex items-center justify-between py-1.5 border-b border-border/50 last:border-0">
-            <div>
-              <span className="font-mono text-xs text-primary font-semibold">{item.tag}</span>
-              <p className="text-sm">{item.name}</p>
+        {safeItems.map((item, idx) => {
+          const tagLabel = item.tag || item.assetTag || `AF-${item.id || idx}`;
+          const statLabel = item.stat || item.status || (item.utilization !== undefined ? `${item.utilization}%` : '');
+          return (
+            <div key={tagLabel} className="flex items-center justify-between py-1.5 border-b border-border/50 last:border-0">
+              <div>
+                <span className="font-mono text-xs text-primary font-semibold">{tagLabel}</span>
+                <p className="text-sm">{item.name || 'Asset'}</p>
+              </div>
+              <span className="text-xs text-muted-foreground">{statLabel}</span>
             </div>
-            <span className="text-xs text-muted-foreground">{item.stat}</span>
-          </div>
-        ))}
+          );
+        })}
+        {safeItems.length === 0 && (
+          <p className="text-xs text-muted-foreground text-center py-4">No data available.</p>
+        )}
       </CardContent>
     </Card>
   );
@@ -65,20 +74,52 @@ function SummaryCard({ title, icon: Icon, items }) {
 export default function ReportsPage() {
   const [utilizationData, setUtilizationData] = useState([]);
   const [maintenanceData, setMaintenanceData] = useState([]);
+  const [mostUsed, setMostUsed] = useState(MOST_USED);
+  const [idleAssets, setIdleAssets] = useState(IDLE_ASSETS);
   const [dueMaintenance, setDueMaintenance] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function loadReportData() {
       try {
-        const util = await getUtilizationReport();
-        if (util) setUtilizationData(util);
+        // Load department allocation summary for the first bar chart
+        try {
+          const deptSummary = await getDeptAllocationSummary();
+          if (Array.isArray(deptSummary)) {
+            setUtilizationData(deptSummary);
+          } else if (deptSummary && Array.isArray(deptSummary.data)) {
+            setUtilizationData(deptSummary.data);
+          }
+        } catch (e) {
+          console.warn('Failed to load department allocation summary:', e);
+        }
 
-        const freq = await getMaintenanceFrequencyReport();
-        if (freq) setMaintenanceData(freq);
+        // Load utilization report for the most used and idle assets list
+        try {
+          const util = await getUtilizationReport();
+          if (util) {
+            if (Array.isArray(util.mostUsedAssets)) setMostUsed(util.mostUsedAssets);
+            if (Array.isArray(util.idleAssets)) setIdleAssets(util.idleAssets);
+          }
+        } catch (e) {
+          console.warn('Failed to load utilization report:', e);
+        }
 
-        const due = await getDueForMaintenanceReport();
-        if (due) setDueMaintenance(due);
+        // Load maintenance frequency for the second bar chart
+        try {
+          const freq = await getMaintenanceFrequencyReport();
+          if (Array.isArray(freq)) setMaintenanceData(freq);
+        } catch (e) {
+          console.warn('Maintenance frequency report load skipped:', e);
+        }
+
+        // Load assets due for maintenance or retirement list
+        try {
+          const due = await getDueForMaintenanceReport();
+          if (Array.isArray(due)) setDueMaintenance(due);
+        } catch (e) {
+          console.warn('Due for maintenance report load skipped:', e);
+        }
       } catch (err) {
         console.error('Failed to load reports data:', err);
       } finally {
@@ -145,10 +186,10 @@ export default function ReportsPage() {
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <BlurFade delay={0.15} inView>
-          <SummaryCard title="Most Used Assets" icon={TrendingUp} items={MOST_USED} />
+          <SummaryCard title="Most Used Assets" icon={TrendingUp} items={mostUsed} />
         </BlurFade>
         <BlurFade delay={0.2} inView>
-          <SummaryCard title="Idle Assets" icon={Clock} items={IDLE_ASSETS} />
+          <SummaryCard title="Idle Assets" icon={Clock} items={idleAssets} />
         </BlurFade>
         <BlurFade delay={0.25} inView>
           <SummaryCard title="Due for Maintenance" icon={AlertTriangle} items={dueMaintenance} />

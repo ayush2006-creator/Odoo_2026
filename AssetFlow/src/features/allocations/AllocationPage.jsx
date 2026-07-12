@@ -19,66 +19,208 @@ import { PageHeader } from '@/components/shared/PageHeader';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 import { getEmployees } from '@/api/employees';
 import { getAssets, getAssetAllocationHistory } from '@/api/assets';
-import { createTransfer } from '@/api/transfers';
+import { createTransfer, getTransfers, approveTransfer, rejectTransfer } from '@/api/transfers';
+import { createAllocation, getAllocations, returnAllocation } from '@/api/allocations';
+import { usePermissions } from '@/hooks/usePermissions';
+import { ACTIONS } from '@/lib/permissions';
+
+import { useCallback } from 'react';
 
 export default function AllocationPage() {
   const [searchParams] = useSearchParams();
-  const assetTag = searchParams.get('asset') || 'AF-0076';
+  const assetTag = searchParams.get('asset');
 
-  const [asset, setAsset] = useState({ id: 'asset-76', tag: assetTag, name: 'Dell Laptop', status: 'Allocated', currentHolder: 'Priya Shah' });
+  const [assets, setAssets] = useState([]);
+  const [selectedAsset, setSelectedAsset] = useState(null);
   const [employees, setEmployees] = useState([]);
   const [history, setHistory] = useState([]);
+  const [transfers, setTransfers] = useState([]);
   
   const [toEmployee, setToEmployee] = useState('');
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
+  const { can } = usePermissions();
 
   useEffect(() => {
-    async function loadData() {
+    async function loadInitialData() {
       try {
-        // Fetch asset matching the tag
-        const assetList = await getAssets({ tag: assetTag });
-        if (assetList && assetList.length > 0) {
-          setAsset(assetList[0]);
-          
-          // Load allocation history for that asset
-          const hist = await getAssetAllocationHistory(assetList[0].id);
-          if (hist) setHistory(hist);
+        const empList = await getEmployees();
+        if (empList) {
+          if (Array.isArray(empList)) setEmployees(empList);
+          else if (Array.isArray(empList.data)) setEmployees(empList.data);
         }
 
-        // Fetch employee list for transfer target selector
-        const empList = await getEmployees();
-        if (empList) setEmployees(empList);
+        const assetList = await getAssets();
+        if (assetList) {
+          const actualAssets = Array.isArray(assetList) ? assetList : (Array.isArray(assetList.data) ? assetList.data : []);
+          setAssets(actualAssets);
+          
+          if (assetTag) {
+            const matched = actualAssets.find(a => (a.tag === assetTag || a.assetTag === assetTag));
+            if (matched) {
+              setSelectedAsset(matched);
+              return;
+            }
+          }
+          if (actualAssets.length > 0) {
+            setSelectedAsset(actualAssets[0]);
+          }
+        }
       } catch (err) {
-        console.error('Failed to load allocation/employee data:', err);
+        console.error('Failed to load initial assets/employees:', err);
       }
     }
-    loadData();
+    loadInitialData();
   }, [assetTag]);
 
-  const currentHolderName = asset.currentHolderType === 'Employee' && asset.currentHolderId
-    ? (employees.find(e => String(e.id) === String(asset.currentHolderId))?.name || `Employee #${asset.currentHolderId}`)
+  useEffect(() => {
+    async function loadHistory() {
+      if (!selectedAsset) return;
+      try {
+        const hist = await getAssetAllocationHistory(selectedAsset.id);
+        if (hist) {
+          if (Array.isArray(hist)) setHistory(hist);
+          else if (Array.isArray(hist.data)) setHistory(hist.data);
+        }
+      } catch (err) {
+        console.error('Failed to load asset history:', err);
+      }
+    }
+    loadHistory();
+  }, [selectedAsset]);
+
+  const loadTransfers = useCallback(async () => {
+    if (!can(ACTIONS.TRANSFER_APPROVE)) return;
+    try {
+      const list = await getTransfers();
+      if (list) {
+        if (Array.isArray(list)) setTransfers(list);
+        else if (Array.isArray(list.data)) setTransfers(list.data);
+      }
+    } catch (err) {
+      console.error('Failed to load transfers:', err);
+    }
+  }, [can]);
+
+  useEffect(() => {
+    loadTransfers();
+  }, [loadTransfers, selectedAsset]);
+
+  const safeEmployees = Array.isArray(employees) ? employees : [];
+  const safeAssets = Array.isArray(assets) ? assets : [];
+  const safeHistory = Array.isArray(history) ? history : [];
+  const pendingTransfers = Array.isArray(transfers)
+    ? transfers.filter(t => t && (t.status === 'Pending' || t.status === 'pending'))
+    : [];
+
+  const currentHolderName = selectedAsset?.currentHolderType === 'Employee' && selectedAsset?.currentHolderId
+    ? (safeEmployees.find(e => String(e.id) === String(selectedAsset.currentHolderId))?.name || `Employee #${selectedAsset.currentHolderId}`)
     : 'None';
+
+  const getEmployeeName = (id) => {
+    return safeEmployees.find(e => String(e.id) === String(id))?.name || `Employee #${id}`;
+  };
+
+  const handleApproveTransfer = async (id) => {
+    setSubmitting(true);
+    setSuccessMsg('');
+    try {
+      await approveTransfer(id);
+      setSuccessMsg('Transfer request approved and executed successfully!');
+      await loadTransfers();
+      if (selectedAsset) {
+        const assetList = await getAssets();
+        if (assetList) {
+          setAssets(assetList);
+          const updated = assetList.find(a => a.id === selectedAsset.id);
+          if (updated) setSelectedAsset(updated);
+        }
+        const hist = await getAssetAllocationHistory(selectedAsset.id);
+        if (hist) setHistory(hist);
+      }
+    } catch (err) {
+      console.error('Failed to approve transfer:', err);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleRejectTransfer = async (id) => {
+    setSubmitting(true);
+    setSuccessMsg('');
+    try {
+      await rejectTransfer(id);
+      setSuccessMsg('Transfer request rejected successfully.');
+      await loadTransfers();
+    } catch (err) {
+      console.error('Failed to reject transfer:', err);
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!toEmployee) return;
+    if (!toEmployee || !selectedAsset) return;
     
     setSubmitting(true);
     setSuccessMsg('');
     try {
-      await createTransfer({
-        assetId: asset.id,
-        fromHolderId: asset.currentHolderId || 1, 
-        toHolderId: parseInt(toEmployee, 10),
-        reason
-      });
-      setSuccessMsg('Transfer request submitted successfully!');
+      if (can(ACTIONS.ALLOCATION_CREATE)) {
+        // Direct transfer/allocation workflow for Admins
+        try {
+          const list = await getAllocations();
+          const safeList = Array.isArray(list) ? list : (list && Array.isArray(list.data) ? list.data : []);
+          const active = safeList.find(al => al.assetId === selectedAsset.id && (al.status?.toLowerCase() === 'active' || al.status?.toLowerCase() === 'allocated'));
+          
+          if (active) {
+            await returnAllocation(active.id, { conditionCheckInNotes: 'Automatic release for direct admin transfer.' });
+          }
+        } catch (err) {
+          console.warn('Auto-return step skipped or failed:', err);
+        }
+
+        await createAllocation({
+          assetId: selectedAsset.id,
+          holderType: 'Employee',
+          holderId: String(toEmployee)
+        });
+
+        setSuccessMsg('Asset allocated and transferred directly!');
+      } else {
+        // Standard Employee request workflow
+        await createTransfer({
+          assetId: selectedAsset.id,
+          fromHolderId: selectedAsset.currentHolderId || 1, 
+          toHolderId: parseInt(toEmployee, 10),
+          reason
+        });
+        setSuccessMsg('Transfer request submitted successfully!');
+      }
+
       setToEmployee('');
       setReason('');
+      
+      // Reload assets list to sync current status & holder
+      const assetList = await getAssets();
+      if (assetList) {
+        const actualAssets = Array.isArray(assetList) ? assetList : (Array.isArray(assetList.data) ? assetList.data : []);
+        setAssets(actualAssets);
+        const updated = actualAssets.find(a => a.id === selectedAsset.id);
+        if (updated) setSelectedAsset(updated);
+      }
+
+      // Reload history log
+      const hist = await getAssetAllocationHistory(selectedAsset.id);
+      if (hist) {
+        if (Array.isArray(hist)) setHistory(hist);
+        else if (Array.isArray(hist.data)) setHistory(hist.data);
+      }
+
+      await loadTransfers();
     } catch (err) {
-      console.error('Failed to submit transfer:', err);
+      console.error('Failed to execute transfer/allocation:', err);
     } finally {
       setSubmitting(false);
     }
@@ -96,26 +238,47 @@ export default function AllocationPage() {
         </Alert>
       )}
 
-      {/* Asset Info */}
+      {/* Asset Selector */}
       <BlurFade delay={0.05} inView>
         <Card>
-          <CardContent className="flex items-center gap-4 py-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10">
+          <CardContent className="flex flex-col sm:flex-row sm:items-center gap-4 py-4">
+            <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 shrink-0">
               <Package className="size-6 text-primary" />
             </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Asset</p>
-              <p className="font-semibold text-lg">{asset.tag || asset.assetTag} — {asset.name}</p>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs text-muted-foreground mb-1">Select Asset for Allocation & Transfer</p>
+              <Select
+                value={selectedAsset ? String(selectedAsset.id) : ''}
+                onValueChange={(val) => {
+                  const found = safeAssets.find(a => String(a.id) === val);
+                  if (found) setSelectedAsset(found);
+                }}
+              >
+                <SelectTrigger className="w-full max-w-md font-semibold text-sm h-10">
+                  <SelectValue>
+                    {selectedAsset ? `${selectedAsset.name} (${selectedAsset.tag || selectedAsset.assetTag || `AF-${selectedAsset.id}`})` : 'No assets available'}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {safeAssets.map((a) => (
+                    <SelectItem key={a.id} value={String(a.id)}>
+                      {`${a.name} (${a.tag || a.assetTag || `AF-${a.id}`})`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-            <div className="ml-auto">
-              <StatusBadge status={asset.status} />
-            </div>
+            {selectedAsset && (
+              <div className="sm:ml-auto">
+                <StatusBadge status={selectedAsset.status} />
+              </div>
+            )}
           </CardContent>
         </Card>
       </BlurFade>
 
       {/* Conflict Alert */}
-      {asset.status === 'Allocated' && (
+      {selectedAsset?.status === 'Allocated' && (
         <BlurFade delay={0.1} inView>
           <Alert variant="destructive" className="border-destructive/40 bg-destructive/5">
             <AlertTriangle className="size-4" />
@@ -134,7 +297,7 @@ export default function AllocationPage() {
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
               <ArrowRight className="size-4 text-primary" />
-              Transfer Request
+              {can(ACTIONS.ALLOCATION_CREATE) ? 'Direct Allocation & Transfer (Admin)' : 'Transfer Request'}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -148,33 +311,107 @@ export default function AllocationPage() {
                   <Label>To</Label>
                   <Select value={toEmployee} onValueChange={setToEmployee}>
                     <SelectTrigger>
-                      <SelectValue placeholder="Select Employee..." />
+                      <SelectValue>
+                        {toEmployee ? (safeEmployees.find(e => String(e.id) === toEmployee)?.name || 'Select Employee...') : 'Select Employee...'}
+                      </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
-                      {employees.map((e) => (
-                        <SelectItem key={e.id} value={String(e.id)}>{e.name}</SelectItem>
+                      {safeEmployees.map((e) => (
+                        <SelectItem key={e.id} value={String(e.id)}>
+                          {`${e.name}`}
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
               </div>
-              <div className="space-y-2">
-                <Label>Reason</Label>
-                <Textarea
-                  placeholder="Why is this transfer needed?"
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                  rows={3}
-                />
-              </div>
+              {!can(ACTIONS.ALLOCATION_CREATE) && (
+                <div className="space-y-2">
+                  <Label>Reason</Label>
+                  <Textarea
+                    placeholder="Why is this transfer needed?"
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    rows={3}
+                  />
+                </div>
+              )}
               <Button type="submit" disabled={!toEmployee || submitting}>
                 <Send className="size-4 mr-2" />
-                {submitting ? 'Submitting...' : 'Submit Request'}
+                {submitting ? 'Processing...' : (can(ACTIONS.ALLOCATION_CREATE) ? 'Execute Direct Transfer' : 'Submit Request')}
               </Button>
             </form>
           </CardContent>
         </Card>
       </BlurFade>
+
+      {/* Administrative Approval Control Panel */}
+      {can(ACTIONS.TRANSFER_APPROVE) && pendingTransfers.length > 0 && (
+        <BlurFade delay={0.18} inView>
+          <Card className="border-t-2 border-t-primary">
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <ArrowRight className="size-4 text-primary" />
+                Pending Transfer Approvals (Admin)
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {pendingTransfers.map((req) => {
+                const isCurrent = selectedAsset && req.assetId === selectedAsset.id;
+                return (
+                  <div
+                    key={req.id}
+                    className={`p-4 rounded-lg border transition-colors ${
+                      isCurrent
+                        ? 'bg-primary/5 border-primary/30'
+                        : 'border-border/60 bg-card'
+                    }`}
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <span className="font-mono text-xs font-semibold text-primary">
+                          {req.asset?.assetTag || req.asset?.tag || `Asset #${req.assetId}`}
+                        </span>
+                        <h4 className="text-sm font-semibold mb-1">
+                          {req.asset?.name || 'Asset Transfer'}
+                        </h4>
+                        <p className="text-xs text-muted-foreground">
+                          From: <span className="font-medium text-foreground">{getEmployeeName(req.fromHolderId)}</span>{' '}
+                          → To: <span className="font-medium text-foreground">{getEmployeeName(req.toHolderId)}</span>
+                        </p>
+                        {req.reason && (
+                          <p className="text-xs italic text-muted-foreground mt-1">
+                            Reason: "{req.reason}"
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0 sm:ml-auto">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="text-destructive border-destructive/20 hover:bg-destructive/10"
+                          onClick={() => handleRejectTransfer(req.id)}
+                          disabled={submitting}
+                        >
+                          Reject
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="default"
+                          onClick={() => handleApproveTransfer(req.id)}
+                          disabled={submitting}
+                        >
+                          Approve & Execute
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
+        </BlurFade>
+      )}
 
       {/* Allocation History */}
       <BlurFade delay={0.2} inView>
@@ -187,7 +424,7 @@ export default function AllocationPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-0">
-              {history.map((item, i) => (
+              {safeHistory.map((item, i) => (
                 <div
                   key={i}
                   className="flex items-start gap-3 py-3 border-l-2 border-primary/20 pl-4 ml-2 relative"
@@ -202,7 +439,7 @@ export default function AllocationPage() {
                   </span>
                 </div>
               ))}
-              {history.length === 0 && (
+              {safeHistory.length === 0 && (
                 <p className="text-sm text-muted-foreground text-center py-4">No allocation history available.</p>
               )}
             </div>

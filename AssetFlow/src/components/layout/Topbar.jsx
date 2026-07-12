@@ -82,14 +82,12 @@ export function Topbar({ title }) {
 
       {/* User menu */}
       <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" className="rounded-full p-0 h-8 w-8">
-            <Avatar className="h-8 w-8">
-              <AvatarFallback className="bg-primary/15 text-primary text-xs font-semibold">
-                {initials}
-              </AvatarFallback>
-            </Avatar>
-          </Button>
+        <DropdownMenuTrigger className="rounded-full p-0 h-8 w-8 hover:opacity-85 transition-opacity cursor-pointer">
+          <Avatar className="h-8 w-8">
+            <AvatarFallback className="bg-primary/15 text-primary text-xs font-semibold">
+              {initials}
+            </AvatarFallback>
+          </Avatar>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-52">
           <DropdownMenuLabel className="font-normal">

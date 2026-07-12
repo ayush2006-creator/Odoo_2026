@@ -176,12 +176,14 @@ export default function BookingPage() {
                 }}
               >
                 <SelectTrigger className="w-full max-w-md font-semibold text-sm h-10">
-                  <SelectValue placeholder="No bookable assets available" />
+                  <SelectValue>
+                    {selectedAsset ? `${selectedAsset.name} (${selectedAsset.tag || selectedAsset.assetTag || `AF-${selectedAsset.id}`})` : 'No bookable assets available'}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {assets.map((a) => (
                     <SelectItem key={a.id} value={String(a.id)}>
-                      {a.name} ({a.tag || a.assetTag || `AF-${a.id}`}) — {a.location || 'HQ'}
+                      {`${a.name} (${a.tag || a.assetTag || `AF-${a.id}`}) — ${a.location || 'HQ'}`}
                     </SelectItem>
                   ))}
                 </SelectContent>

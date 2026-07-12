@@ -84,11 +84,11 @@ export default function NotificationsPage() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className={`text-sm ${item.unread ? 'font-medium' : 'text-muted-foreground'}`}>
-                      {item.msg}
+                      {item.message || item.msg || item.content || item.text || 'Notification Update'}
                     </p>
                   </div>
                   <span className="text-xs text-muted-foreground whitespace-nowrap shrink-0">
-                    {item.time}
+                    {item.time || (item.createdAt ? new Date(item.createdAt).toLocaleDateString() : '') || 'just now'}
                   </span>
                   {item.unread && (
                     <div className="h-2 w-2 rounded-full bg-primary shrink-0" />
